@@ -1,0 +1,19 @@
+# Render.com deployment config — one-click deploy
+services:
+  - type: web
+    name: budget-telegram-bot
+    runtime: python
+    region: singapore  # closest to Indonesia
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn --bind 0.0.0.0:$PORT --workers 1 --threads 8 --timeout 300 main:app
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false        # you'll fill this in Render dashboard
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GOOGLE_SHEET_ID
+        value: 1bihj0mIqYCtzY1Vcr5j3yyZc6t2i4TSkCSKplvuV4i8
+      - key: GOOGLE_SERVICE_ACCOUNT_JSON
+        sync: false
+    healthCheckPath: /
