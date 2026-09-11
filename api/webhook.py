@@ -232,7 +232,12 @@ async def cmd_summary(update, context):
     lines = [f"📊 *Ringkasan {month_name}*\n"]
     for cat, total in sorted(cat_totals.items(), key=lambda x: -x[1]):
         lines.append(f"  {cat}: `{format_amount(total)}`")
-    lines += [f"\n💰 *Total: {format_amount(grand_total)}*", f"📋 {len(txs)} transaksi"]
+    lines += [f"\n💰 *Total: {format_amount(grand_total)}*"]
+    max_tx = result.get("max_transactions", 30)
+    if len(txs) >= max_tx:
+        lines.append(f"⚠️ *{len(txs)}/{max_tx} transaksi (Penuh!)*")
+    else:
+        lines.append(f"📋 {len(txs)}/{max_tx} transaksi")
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 
@@ -329,7 +334,8 @@ async def handle_callback(update, context):
                 parse_mode="Markdown",
             )
         else:
-            await query.edit_message_text(f"❌ Gagal menyimpan:\n`{result.get('error')}`", parse_mode="Markdown")
+            err = result.get("error", "Terjadi kesalahan.")
+            await query.edit_message_text(f"❌ Gagal menyimpan:\n\n{err}")
 
     elif cb == "confirm_cancel":
         sessions.pop(user_id, None)

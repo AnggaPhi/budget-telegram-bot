@@ -47,13 +47,15 @@ MONTH_TABS = {
 
 # Column mapping for expense table (K=11, L=12, M=13, N=14, O=15)
 # Actual sheet columns: K=No, L=Date, M=Title, N=Amount, O=Category
-EXPENSE_START_ROW = 6   # Row 6
-EXPENSE_END_ROW = 33    # Row 33
-EXPENSE_COL_NO = 11     # K  - Row number
-EXPENSE_COL_DATE = 12   # L  - Date
-EXPENSE_COL_DESC = 13   # M  - Description / Title
-EXPENSE_COL_AMT = 14    # N  - Amount
-EXPENSE_COL_CAT = 15    # O  - Category
+# Range: rows 5 to 34 (maximum 30 transactions)
+EXPENSE_START_ROW = 5   # Row 5 (K5:O5)
+EXPENSE_END_ROW = 34    # Row 34 (K34:O34)
+MAX_EXPENSE_TRANSACTIONS = 30
+EXPENSE_COL_NO = 11     # K  - Row number (K5:K34)
+EXPENSE_COL_DATE = 12   # L  - Date (L5:L34)
+EXPENSE_COL_DESC = 13   # M  - Description / Title (M5:M34)
+EXPENSE_COL_AMT = 14    # N  - Amount (N5:N34)
+EXPENSE_COL_CAT = 15    # O  - Category (O5:O34)
 
 
 
@@ -104,17 +106,18 @@ def _get_worksheet(month: int = None) -> gspread.Worksheet:
 
 def append_expense(date: str, merchant: str, category: str, amount: int, notes: str = "", month: int = None) -> dict:
     """
-    Append a new expense row to the transaction table (K6:O33).
+    Append a new expense row to the transaction table (K5:O34).
+    Limit: maximum 30 transactions.
     Returns {"success": True, "row": N, "no": N} or {"success": False, "error": "..."}
     """
     try:
         ws = _get_worksheet(month)
 
-        # Read existing expense rows to find the next empty slot
-        # K6:O33 = rows 6-33, cols K(11)-O(15)
+        # Read existing expense rows (K5:O34)
         existing = ws.get(f"K{EXPENSE_START_ROW}:O{EXPENSE_END_ROW}")
 
-        # Find the first completely empty row
+        # Count used rows and find the next empty slot
+        used_count = 0
         next_row = EXPENSE_START_ROW
         last_no = 0
         for i, row in enumerate(existing):
@@ -122,17 +125,23 @@ def append_expense(date: str, merchant: str, category: str, amount: int, notes: 
             val = row[0] if row else ""
             if str(val).strip():
                 try:
-                    last_no = int(str(val).strip())
+                    parsed_no = int(str(val).strip())
+                    last_no = max(last_no, parsed_no)
                 except ValueError:
                     last_no += 1
+                used_count += 1
                 next_row = EXPENSE_START_ROW + i + 1
             else:
                 # First empty row found
                 next_row = EXPENSE_START_ROW + i
                 break
 
-        if next_row > EXPENSE_END_ROW:
-            return {"success": False, "error": "Expense table is full (K6:O33). Please clear some rows."}
+        # Check limit (maximum 30 transactions, rows 5 to 34)
+        if used_count >= MAX_EXPENSE_TRANSACTIONS or next_row > EXPENSE_END_ROW:
+            return {
+                "success": False,
+                "error": f"⚠️ Batas maksimal {MAX_EXPENSE_TRANSACTIONS} transaksi tercapai (K{EXPENSE_START_ROW}:K{EXPENSE_END_ROW} penuh). Silakan hapus atau arsipkan transaksi lama di spreadsheet terlebih dahulu."
+            }
 
         new_no = last_no + 1
         description = f"{merchant}" + (f" - {notes}" if notes else "")
@@ -264,6 +273,7 @@ def get_monthly_summary(month: int = None) -> dict:
             "success": True,
             "transactions": transactions,
             "count": len(transactions),
+            "max_transactions": MAX_EXPENSE_TRANSACTIONS,
         }
 
     except Exception as e:
