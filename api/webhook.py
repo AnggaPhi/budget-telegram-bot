@@ -12,6 +12,7 @@ import json
 import logging
 import asyncio
 import traceback
+import re
 from datetime import datetime
 
 # ── Fix import path so Vercel can find the services/ folder ──────────────────
@@ -91,6 +92,16 @@ def format_amount(amount):
         return f"Rp {int(amount):,}".replace(",", ".")
     except (TypeError, ValueError):
         return str(amount)
+
+
+def parse_amount(val) -> int:
+    if val is None:
+        return 0
+    s = str(val).replace("Rp", "").replace("IDR", "").strip()
+    s = re.sub(r'[,.]00$', '', s)
+    digits = re.sub(r'[^\d]', '', s)
+    return int(digits) if digits else 0
+
 
 
 def format_confirmation(data):
@@ -213,12 +224,8 @@ async def cmd_summary(update, context):
     cat_totals = {}
     grand_total = 0
     for tx in txs:
-        try:
-            amt = int(str(tx.get("amount", 0))
-                      .replace("Rp", "").replace(".", "").replace(",", "").strip())
-        except (ValueError, TypeError):
-            amt = 0
-        cat = tx.get("category") or "Others"
+        amt = parse_amount(tx.get("amount", 0))
+        cat = str(tx.get("category") or "").strip() or "Others"
         cat_totals[cat] = cat_totals.get(cat, 0) + amt
         grand_total += amt
 

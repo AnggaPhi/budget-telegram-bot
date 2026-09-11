@@ -46,13 +46,15 @@ MONTH_TABS = {
 }
 
 # Column mapping for expense table (K=11, L=12, M=13, N=14, O=15)
+# Actual sheet columns: K=No, L=Date, M=Title, N=Amount, O=Category
 EXPENSE_START_ROW = 6   # Row 6
 EXPENSE_END_ROW = 33    # Row 33
 EXPENSE_COL_NO = 11     # K  - Row number
 EXPENSE_COL_DATE = 12   # L  - Date
-EXPENSE_COL_DESC = 13   # M  - Description / Merchant
-EXPENSE_COL_CAT = 14    # N  - Category
-EXPENSE_COL_AMT = 15    # O  - Amount
+EXPENSE_COL_DESC = 13   # M  - Description / Title
+EXPENSE_COL_AMT = 14    # N  - Amount
+EXPENSE_COL_CAT = 15    # O  - Category
+
 
 
 def _get_client() -> gspread.Client:
@@ -138,8 +140,9 @@ def append_expense(date: str, merchant: str, category: str, amount: int, notes: 
         # Write the row
         ws.update(
             f"K{next_row}:O{next_row}",
-            [[new_no, date, description, category, amount]]
+            [[new_no, date, description, amount, category]]
         )
+
 
         return {"success": True, "row": next_row, "no": new_no}
 
@@ -252,9 +255,10 @@ def get_monthly_summary(month: int = None) -> dict:
                     "no": row[0] if len(row) > 0 else "",
                     "date": row[1] if len(row) > 1 else "",
                     "description": row[2] if len(row) > 2 else "",
-                    "category": row[3] if len(row) > 3 else "",
-                    "amount": row[4] if len(row) > 4 else "",
+                    "amount": row[3] if len(row) > 3 else "",
+                    "category": row[4] if len(row) > 4 and str(row[4]).strip() else "Others",
                 })
+
 
         return {
             "success": True,

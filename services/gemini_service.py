@@ -74,7 +74,6 @@ def _call_openrouter(messages: list) -> str:
             model,
             "google/gemma-4-26b-a4b-it:free",
             "inclusionai/ling-3.0-flash-vl:free",
-            "nvidia/nemotron-3.5-lightning:free",
         ],
         "messages": messages,
         "temperature": 0.1,
