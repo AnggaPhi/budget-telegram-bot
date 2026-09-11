@@ -515,11 +515,6 @@ def debug():
     try:
         import services.gemini_service
         checks["gemini_service import"] = "OK"
-        try:
-            test_res = services.gemini_service._call_openrouter([{"role": "user", "content": "ping"}], is_vision=False)
-            checks["openrouter_test"] = f"OK: {test_res[:60]}"
-        except Exception as oe:
-            checks["openrouter_test"] = f"FAIL: {oe}"
     except Exception as e:
         checks["gemini_service import"] = f"FAIL: {e}"
     try:
