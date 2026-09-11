@@ -57,43 +57,25 @@ Rules:
 
 
 def _call_openrouter(messages: list, is_vision: bool = False) -> str:
-    """Send chat completions request to OpenRouter API with multi-provider fallbacks."""
+    """Send chat completions request to OpenRouter API with multi-provider fallback batches (max 3 per batch)."""
     api_key = os.environ.get("OPENROUTER_API_KEY")
     if not api_key:
         raise RuntimeError("OPENROUTER_API_KEY environment variable is not set.")
 
     if is_vision:
-        # Vision-capable free models across providers
-        primary_model = "google/gemma-4-31b-it:free"
-        models_list = [
-            "google/gemma-4-31b-it:free",
-            "inclusionai/ling-3.0-flash-vl:free",
-            "google/gemma-4-26b-a4b-it:free",
-            "thinkingmachines/inkling:free",
-            "nex-agi/nex-n2.5-mini:free",
+        batches = [
+            ["google/gemma-4-31b-it:free", "inclusionai/ling-3.0-flash-vl:free", "thinkingmachines/inkling:free"],
+            ["nex-agi/nex-n2.5-mini:free", "google/gemma-4-26b-a4b-it:free"],
         ]
     else:
-        # Multi-provider free models to avoid single-provider 429 rate limits
-        primary_model = "google/gemma-4-31b-it:free"
-        models_list = [
-            "google/gemma-4-31b-it:free",
-            "liquid/lfm-2.5-2.6b:free",
-            "nvidia/nemotron-3.5-lightning:free",
-            "nex-agi/nex-n2.5-mini:free",
-            "thinkingmachines/inkling:free",
-            "google/gemma-4-26b-a4b-it:free",
-            "inclusionai/ling-3.0-flash-vl:free",
-            "poolside/laguna-s-2.1:free",
+        batches = [
+            ["google/gemma-4-31b-it:free", "liquid/lfm-2.5-2.6b:free", "nvidia/nemotron-3.5-lightning:free"],
+            ["nex-agi/nex-n2.5-mini:free", "thinkingmachines/inkling:free", "poolside/laguna-s-2.1:free"],
         ]
 
-    model = os.environ.get("OPENROUTER_MODEL", primary_model)
-
-    payload = {
-        "model": model,
-        "models": models_list,
-        "messages": messages,
-        "temperature": 0.1,
-    }
+    custom_model = os.environ.get("OPENROUTER_MODEL")
+    if custom_model:
+        batches[0] = [custom_model] + [m for m in batches[0] if m != custom_model][:2]
 
     headers = {
         "Authorization": f"Bearer {api_key.strip()}",
@@ -102,23 +84,37 @@ def _call_openrouter(messages: list, is_vision: bool = False) -> str:
         "X-Title": "Budget Telegram Bot",
     }
 
-    req = urllib.request.Request(
-        "https://openrouter.ai/api/v1/chat/completions",
-        data=json.dumps(payload).encode("utf-8"),
-        headers=headers,
-        method="POST",
-    )
+    last_error = None
+    for batch in batches:
+        payload = {
+            "model": batch[0],
+            "models": batch[:3],  # OpenRouter requires maximum 3 items in models array
+            "messages": messages,
+            "temperature": 0.1,
+        }
 
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            res_data = json.loads(resp.read().decode("utf-8"))
-            choices = res_data.get("choices", [])
-            if not choices:
-                raise RuntimeError(f"OpenRouter empty response: {res_data}")
-            return choices[0]["message"]["content"]
-    except urllib.error.HTTPError as e:
-        err_msg = e.read().decode("utf-8", errors="ignore")
-        raise RuntimeError(f"OpenRouter error {e.code}: {err_msg}")
+        req = urllib.request.Request(
+            "https://openrouter.ai/api/v1/chat/completions",
+            data=json.dumps(payload).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
+
+        try:
+            with urllib.request.urlopen(req, timeout=25) as resp:
+                res_data = json.loads(resp.read().decode("utf-8"))
+                choices = res_data.get("choices", [])
+                if choices:
+                    return choices[0]["message"]["content"]
+        except urllib.error.HTTPError as e:
+            err_msg = e.read().decode("utf-8", errors="ignore")
+            last_error = f"OpenRouter error {e.code}: {err_msg}"
+            continue
+        except Exception as e:
+            last_error = str(e)
+            continue
+
+    raise RuntimeError(last_error or "OpenRouter failed on all fallback models.")
 
 
 
@@ -263,8 +259,8 @@ def _format_local_fallback(user_message: str, sheet_context: str) -> str:
         hutang = match.group(1).strip() if match else "Tidak ada hutang tercatat (Rp 0)"
         return f"🔴 *Hutang / Alokasi Priority A:*\n{hutang}\n\n_(Data langsung dari spreadsheet)_"
 
-    # 3. Transaksi kemarin / hari ini / riwayat
-    if any(w in u for w in ("kemarin", "hari ini", "tadi", "daftar", "rincian", "beli apa")):
+    # 3. Transaksi riwayat / daftar
+    if any(w in u for w in ("daftar transaksi", "riwayat transaksi", "history", "list transaksi")):
         tx_lines = [line.strip() for line in sheet_context.split("\n") if line.strip().startswith("- ")]
         if tx_lines:
             recent = "\n".join(tx_lines[-8:])
@@ -273,18 +269,20 @@ def _format_local_fallback(user_message: str, sheet_context: str) -> str:
             return "📋 Belum ada transaksi pengeluaran yang tercatat di spreadsheet untuk bulan ini."
 
     # 4. Out-of-scope question detection in fallback
-    if any(w in u for w in ("presiden", "siapa", "coding", "python", "resep", "cuaca", "berita")) and not any(w in u for w in ("uang", "biaya", "pengeluaran", "pemasukan", "hutang", "transaksi", "spreadsheet", "budget")):
+    if any(w in u for w in ("presiden", "coding", "python", "resep", "cuaca", "berita")):
         return "Maaf, saya hanya asisten keuangan pribadi Anda. Saya hanya bisa menjawab pertanyaan seputar data keuangan di spreadsheet Anda."
 
     # 5. General summary fallback
     clean_lines = []
     for line in sheet_context.split("\n"):
         if line.startswith("[Data Keuangan"):
-            clean_lines.append(f"📊 *{line.strip('[]')}*")
+            tag = line.strip("[]")
+            clean_lines.append(f"📊 *{tag}*")
         elif line.startswith("• "):
             clean_lines.append(line)
         elif line.startswith("- "):
             clean_lines.append(f"  {line}")
-    return "\n".join(clean_lines) if clean_lines else sheet_context
+    fallback_text = "\n".join(clean_lines) if clean_lines else sheet_context
+    return f"⚠️ *Layanan AI sedang sibuk.* Berikut ringkasan data spreadsheet Anda:\n\n{fallback_text}"
 
 
