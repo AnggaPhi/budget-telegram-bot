@@ -22,14 +22,16 @@ Telegram ──▶ Vercel (Flask Serverless) ──▶ Gemini 1.5 Flash (AI OCR 
 
 Buka [Vercel Dashboard](https://vercel.com) → Pilih project `budget-telegram-bot` → **Settings** → **Environment Variables**.
 
-Pastikan 4 variable ini sudah terdaftar untuk **Production**:
+Pastikan environment variable ini sudah terdaftar untuk **Production**:
 
 | Variable Name | Keterangan |
 |---|---|
 | `TELEGRAM_BOT_TOKEN` | Token dari @BotFather di Telegram |
-| `GEMINI_API_KEY` | API Key dari [Google AI Studio](https://aistudio.google.com) |
+| `OPENROUTER_API_KEY` | API Key dari [openrouter.ai](https://openrouter.ai) (pilihan utama) |
+| `GEMINI_API_KEY` | API Key dari [Google AI Studio](https://aistudio.google.com) (opsional / cadangan) |
 | `GOOGLE_SHEET_ID` | `1bihj0mIqYCtzY1Vcr5j3yyZc6t2i4TSkCSKplvuV4i8` |
 | `GOOGLE_SERVICE_ACCOUNT_JSON` | Seluruh isi file JSON Google Service Account |
+
 
 ---
 

@@ -1,29 +1,16 @@
 """
-Gemini AI Service
+AI Extraction Service (OpenRouter & Gemini)
 Extracts structured transaction data from receipt images or free text.
+Supports OpenRouter (free vision models) and Google Gemini.
 """
 
 import os
+import sys
 import json
 import re
-import google.generativeai as genai
+import base64
+import urllib.request
 from datetime import datetime
-
-# Lazy-initialized — configured on first use, not at import time
-_model = None
-
-
-def _get_model():
-    """Return a configured Gemini model, initializing on first call."""
-    global _model
-    if _model is None:
-        api_key = os.environ.get("GEMINI_API_KEY")
-        if not api_key:
-            raise RuntimeError("GEMINI_API_KEY environment variable is not set.")
-        genai.configure(api_key=api_key)
-        _model = genai.GenerativeModel("gemini-1.5-flash")
-    return _model
-
 
 CATEGORIES = [
     "Food & Drinks",
@@ -65,46 +52,128 @@ Rules:
 - For credit: merchant = person who owes me, notes = what for  
 - For asset: merchant = asset type (Stock/Gold/Crypto), notes = asset name and action
 - If a field cannot be determined, use null
-- Return ONLY the JSON, no extra text
+- Return ONLY the JSON object, do not wrap in markdown or explain.
 """
+
+
+def _call_openrouter(messages: list) -> str:
+    """Send chat completions request to OpenRouter API."""
+    api_key = os.environ.get("OPENROUTER_API_KEY")
+    if not api_key:
+        raise RuntimeError("OPENROUTER_API_KEY environment variable is not set.")
+
+    # Free vision model on OpenRouter:
+    model = os.environ.get(
+        "OPENROUTER_MODEL",
+        "meta-llama/llama-3.2-11b-vision-instruct:free"
+    )
+
+    payload = {
+        "model": model,
+        "messages": messages,
+        "temperature": 0.1,
+    }
+
+    headers = {
+        "Authorization": f"Bearer {api_key.strip()}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://github.com/AnggaPhi/budget-telegram-bot",
+        "X-Title": "Budget Telegram Bot",
+    }
+
+    req = urllib.request.Request(
+        "https://openrouter.ai/api/v1/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        headers=headers,
+        method="POST",
+    )
+
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        res_data = json.loads(resp.read().decode("utf-8"))
+        choices = res_data.get("choices", [])
+        if not choices:
+            raise RuntimeError(f"OpenRouter empty response: {res_data}")
+        return choices[0]["message"]["content"]
+
+
+def _call_gemini(prompt: str, image_bytes: bytes = None, mime_type: str = "image/jpeg") -> str:
+    """Fallback to Gemini API if configured."""
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        raise RuntimeError("Neither OPENROUTER_API_KEY nor GEMINI_API_KEY is set.")
+
+    import google.generativeai as genai
+    genai.configure(api_key=api_key)
+    model = genai.GenerativeModel("gemini-1.5-flash")
+
+    if image_bytes:
+        image_part = {"mime_type": mime_type, "data": image_bytes}
+        res = model.generate_content([prompt, image_part])
+    else:
+        res = model.generate_content(prompt)
+    return res.text
 
 
 def extract_from_image(image_bytes: bytes, mime_type: str = "image/jpeg") -> dict:
     """Extract transaction data from a receipt image."""
-    image_part = {"mime_type": mime_type, "data": image_bytes}
     prompt = SYSTEM_PROMPT + "\n\nAnalyze this receipt image and extract the transaction details."
 
     try:
-        response = _get_model().generate_content([prompt, image_part])
-        return _parse_response(response.text)
+        if os.environ.get("OPENROUTER_API_KEY"):
+            base64_img = base64.b64encode(image_bytes).decode("utf-8")
+            data_uri = f"data:{mime_type};base64,{base64_img}"
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": data_uri}
+                        }
+                    ]
+                }
+            ]
+            raw = _call_openrouter(messages)
+        else:
+            raw = _call_gemini(prompt, image_bytes=image_bytes, mime_type=mime_type)
+
+        return _parse_response(raw)
     except Exception as e:
         return {"error": str(e)}
 
 
 def extract_from_text(text: str) -> dict:
     """Extract transaction data from a free-text message."""
-    prompt = SYSTEM_PROMPT + f"\n\nExtract transaction details from this message:\n\n\"{text}\""
+    prompt = SYSTEM_PROMPT + f'\n\nExtract transaction details from this message:\n\n"{text}"'
 
     try:
-        response = _get_model().generate_content(prompt)
-        return _parse_response(response.text)
+        if os.environ.get("OPENROUTER_API_KEY"):
+            messages = [{"role": "user", "content": prompt}]
+            raw = _call_openrouter(messages)
+        else:
+            raw = _call_gemini(prompt)
+
+        return _parse_response(raw)
     except Exception as e:
         return {"error": str(e)}
 
 
-
 def _parse_response(raw: str) -> dict:
-    """Clean and parse the JSON response from Gemini."""
-    # Strip markdown code blocks if present
+    """Clean and parse the JSON response from the AI model."""
     raw = raw.strip()
-    raw = re.sub(r"^```json\s*", "", raw)
+    raw = re.sub(r"^```json\s*", "", raw, flags=re.IGNORECASE)
     raw = re.sub(r"^```\s*", "", raw)
     raw = re.sub(r"\s*```$", "", raw)
     raw = raw.strip()
 
+    # Find JSON substring if model included extra commentary
+    json_match = re.search(r"(\{.*\})", raw, flags=re.DOTALL)
+    if json_match:
+        raw = json_match.group(1)
+
     try:
         data = json.loads(raw)
-        # Normalize amount to integer
         if data.get("amount") is not None:
             try:
                 data["amount"] = int(str(data["amount"]).replace(",", "").replace(".", "").strip())
@@ -113,3 +182,4 @@ def _parse_response(raw: str) -> dict:
         return data
     except json.JSONDecodeError as e:
         return {"error": f"Failed to parse AI response: {e}", "raw": raw}
+

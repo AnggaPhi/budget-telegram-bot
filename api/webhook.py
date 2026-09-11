@@ -387,6 +387,7 @@ def debug():
     """Health check — shows env var status without exposing secrets."""
     checks = {
         "TELEGRAM_BOT_TOKEN": "SET" if os.environ.get("TELEGRAM_BOT_TOKEN") else "MISSING",
+        "OPENROUTER_API_KEY": "SET" if os.environ.get("OPENROUTER_API_KEY") else "MISSING",
         "GEMINI_API_KEY": "SET" if os.environ.get("GEMINI_API_KEY") else "MISSING",
         "GOOGLE_SHEET_ID": "SET" if os.environ.get("GOOGLE_SHEET_ID") else "MISSING",
         "GOOGLE_SERVICE_ACCOUNT_JSON": "SET" if os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON") else "MISSING",
