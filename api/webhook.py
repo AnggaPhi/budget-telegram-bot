@@ -64,6 +64,8 @@ def get_bot_app():
         _bot_app.add_handler(CommandHandler("start", cmd_start))
         _bot_app.add_handler(CommandHandler("help", cmd_help))
         _bot_app.add_handler(CommandHandler("summary", cmd_summary))
+        _bot_app.add_handler(CommandHandler("balance", cmd_balance))
+        _bot_app.add_handler(CommandHandler("sisa", cmd_balance))
         _bot_app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
         _bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
         _bot_app.add_handler(CallbackQueryHandler(handle_callback))
@@ -89,7 +91,10 @@ sessions = {}
 
 def format_amount(amount):
     try:
-        return f"Rp {int(amount):,}".replace(",", ".")
+        amt = int(amount)
+        if amt < 0:
+            return f"-Rp {abs(amt):,}".replace(",", ".")
+        return f"Rp {amt:,}".replace(",", ".")
     except (TypeError, ValueError):
         return str(amount)
 
@@ -183,6 +188,7 @@ async def cmd_start(update, context):
         "📸 *Foto struk* → Bot baca otomatis dengan AI\n"
         "💬 *Teks bebas* → contoh: `Beli makan siang 25000`\n\n"
         "📊 /summary — Ringkasan bulan ini\n"
+        "💰 /balance — Sisa uang (Income - Expenses)\n"
         "❓ /help — Bantuan lengkap",
         parse_mode="Markdown",
     )
@@ -198,7 +204,8 @@ async def cmd_help(update, context):
         "• `Gaji bulan ini 8000000`\n"
         "• `Pinjem ke Budi 150000 buat makan`\n\n"
         "*Commands:*\n"
-        "/summary — Ringkasan transaksi bulan ini\n"
+        "/summary — Ringkasan transaksi & keuangan bulan ini\n"
+        "/balance — Cek sisa uang (Income I25 - Expenses I10)\n"
         "/start — Mulai ulang\n"
         "/help — Panduan ini",
         parse_mode="Markdown",
@@ -232,13 +239,50 @@ async def cmd_summary(update, context):
     lines = [f"📊 *Ringkasan {month_name}*\n"]
     for cat, total in sorted(cat_totals.items(), key=lambda x: -x[1]):
         lines.append(f"  {cat}: `{format_amount(total)}`")
-    lines += [f"\n💰 *Total: {format_amount(grand_total)}*"]
+    lines += [f"\n💸 *Total Pengeluaran (Tabel):* `{format_amount(grand_total)}`"]
     max_tx = result.get("max_transactions", 30)
     if len(txs) >= max_tx:
         lines.append(f"⚠️ *{len(txs)}/{max_tx} transaksi (Penuh!)*")
     else:
         lines.append(f"📋 {len(txs)}/{max_tx} transaksi")
+
+    # Financial balance from Sheet cells: Income (I25) - Total Expenses (I10)
+    income = result.get("income", 0)
+    expenses = result.get("expenses", 0)
+    money_left = result.get("money_left", 0)
+    money_icon = "💰" if money_left >= 0 else "🚨"
+
+    lines += [
+        "\n━━━━━━━━━━━━━━━━━━",
+        f"💵 *Income (I25):* `{format_amount(income)}`",
+        f"📉 *Expenses (I10):* `{format_amount(expenses)}`",
+        f"{money_icon} *Sisa Uang (Money Left):* `{format_amount(money_left)}`",
+    ]
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+
+async def cmd_balance(update, context):
+    from services.sheets_service import get_money_left
+    await update.message.reply_text("⏳ Menghitung sisa uang...")
+    result = get_money_left()
+    if not result.get("success"):
+        await update.message.reply_text(f"❌ Gagal: {result.get('error')}")
+        return
+
+    income = result.get("income", 0)
+    expenses = result.get("expenses", 0)
+    money_left = result.get("money_left", 0)
+    month_name = datetime.now().strftime("%B %Y")
+    money_icon = "💰" if money_left >= 0 else "🚨"
+
+    msg = (
+        f"💵 *Status Keuangan — {month_name}*\n\n"
+        f"📥 *Total Income (I25):* `{format_amount(income)}`\n"
+        f"📤 *Total Expenses (I10):* `{format_amount(expenses)}`\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"{money_icon} *Sisa Uang (Money Left):* `{format_amount(money_left)}`"
+    )
+    await update.message.reply_text(msg, parse_mode="Markdown")
 
 
 # ── Message Handlers ──────────────────────────────────────────────────────────

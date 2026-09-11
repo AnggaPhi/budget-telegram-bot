@@ -17,6 +17,7 @@ Auth strategy (in priority order):
 
 import os
 import json
+import re
 from datetime import datetime
 
 import gspread
@@ -251,17 +252,61 @@ def update_debt_credit(row: int, label: str, amount: int, month: int = None) -> 
         return {"success": False, "error": str(e)}
 
 
+def _parse_cell_number(val) -> int:
+    """Parse integer number from a sheet cell (handles 'Rp', commas, periods, spaces, negatives)."""
+    if val is None:
+        return 0
+    s = str(val).replace("Rp", "").replace("IDR", "").strip()
+    s = re.sub(r'[,.]00$', '', s)
+    digits = re.sub(r'[^\d]', '', s)
+    if not digits:
+        return 0
+    is_negative = '-' in str(val) or ('(' in str(val) and ')' in str(val))
+    amt = int(digits)
+    return -amt if is_negative else amt
+
+
+def get_money_left(month: int = None) -> dict:
+    """
+    Calculate how much money is left based on:
+    Income (Cell I25) minus Total Expenses (Cell I10).
+    """
+    try:
+        ws = _get_worksheet(month)
+        income_raw = ws.acell("I25").value
+        expenses_raw = ws.acell("I10").value
+
+        income = _parse_cell_number(income_raw)
+        expenses = _parse_cell_number(expenses_raw)
+        money_left = income - expenses
+
+        return {
+            "success": True,
+            "income": income,
+            "income_raw": income_raw,
+            "expenses": expenses,
+            "expenses_raw": expenses_raw,
+            "money_left": money_left,
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 def get_monthly_summary(month: int = None) -> dict:
     """
     Read the summary totals for a given month.
-    Returns total expenses, debt totals, income totals.
+    Returns total expenses, debt totals, income totals, and money left (I25 - I10).
     """
     try:
         ws = _get_worksheet(month)
 
-        # Read key summary cells
-        expense_total = ws.acell("E11").value  # Total Expenses area
-        debt_total = ws.acell("E8").value
+        # Financial summary: Income (I25) minus Total Expenses (I10)
+        income_raw = ws.acell("I25").value
+        expenses_raw = ws.acell("I10").value
+
+        income = _parse_cell_number(income_raw)
+        expenses = _parse_cell_number(expenses_raw)
+        money_left = income - expenses
 
         # Read all expense rows (K5:P34)
         expense_rows = ws.get(f"K{EXPENSE_START_ROW}:P{EXPENSE_END_ROW}")
@@ -277,9 +322,13 @@ def get_monthly_summary(month: int = None) -> dict:
                     "category": row[5] if len(row) > 5 and str(row[5]).strip() else "Others",
                 })
 
-
         return {
             "success": True,
+            "income": income,
+            "income_raw": income_raw,
+            "expenses": expenses,
+            "expenses_raw": expenses_raw,
+            "money_left": money_left,
             "transactions": transactions,
             "count": len(transactions),
             "max_transactions": MAX_EXPENSE_TRANSACTIONS,
@@ -290,12 +339,20 @@ def get_monthly_summary(month: int = None) -> dict:
 
 
 def inspect_sheet_structure(month: int = None) -> dict:
-    """Read headers and sample rows to check exact column layout."""
+    """Read headers and sample rows to check exact column layout and summary cells."""
     try:
         ws = _get_worksheet(month)
         # Read rows 4 to 8, columns J to Q
         cells = ws.get("J4:Q8")
-        return {"success": True, "cells": cells}
+        income_raw = ws.acell("I25").value
+        expenses_raw = ws.acell("I10").value
+        return {
+            "success": True,
+            "cells": cells,
+            "I10_expenses": expenses_raw,
+            "I25_income": income_raw,
+            "money_left": _parse_cell_number(income_raw) - _parse_cell_number(expenses_raw),
+        }
     except Exception as e:
         return {"success": False, "error": str(e)}
 
