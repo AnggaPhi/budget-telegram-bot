@@ -371,18 +371,12 @@ async def handle_callback(update, context):
         await query.edit_message_text(prompts.get(field, "Masukkan nilai baru:"))
 
 
-# ── Flask Routes ──────────────────────────────────────────────────────────────
+# ── Endpoint Handlers ─────────────────────────────────────────────────────────
 
-@app.route("/", methods=["GET"])
-@app.route("/api", methods=["GET"])
-@app.route("/api/index", methods=["GET"])
-@app.route("/api/index.py", methods=["GET"])
 def index():
     return Response("Budget Bot is running!", status=200)
 
 
-@app.route("/debug", methods=["GET"])
-@app.route("/api/debug", methods=["GET"])
 def debug():
     """Health check — shows env var status without exposing secrets."""
     checks = {
@@ -392,7 +386,7 @@ def debug():
         "GOOGLE_SHEET_ID": "SET" if os.environ.get("GOOGLE_SHEET_ID") else "MISSING",
         "GOOGLE_SERVICE_ACCOUNT_JSON": "SET" if os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON") else "MISSING",
         "request.path": request.path,
-        "request.headers.host": request.headers.get("Host", ""),
+        "x-matched-path": request.headers.get("x-matched-path", ""),
     }
     try:
         import services.gemini_service
@@ -414,8 +408,6 @@ def debug():
     return Response(body, status=200, mimetype="text/plain")
 
 
-@app.route("/webhook", methods=["POST"])
-@app.route("/api/webhook", methods=["POST"])
 def webhook():
     raw = request.get_data()
     if not raw:
@@ -431,16 +423,12 @@ def webhook():
         logger.error(f"Webhook error: {e}\n{traceback.format_exc()}")
         return Response(f"Error: {e}", status=500)
 
-    # Return 200 to Telegram
     return Response("OK", status=200)
 
 
-@app.route("/set_webhook", methods=["GET"])
-@app.route("/api/set_webhook", methods=["GET"])
 def set_webhook():
     import urllib.request as ur
     host = request.host_url.rstrip("/")
-    # Force HTTPS for Telegram webhooks
     if host.startswith("http://"):
         host = "https://" + host[7:]
     webhook_url = f"{host}/webhook"
@@ -457,8 +445,6 @@ def set_webhook():
         return Response(f"Failed to set webhook: {e}", status=500, mimetype="text/plain")
 
 
-@app.route("/get_webhook_info", methods=["GET"])
-@app.route("/api/get_webhook_info", methods=["GET"])
 def get_webhook_info():
     """Diagnostic endpoint to inspect Telegram's view of this webhook."""
     import urllib.request as ur
@@ -471,15 +457,12 @@ def get_webhook_info():
         return Response(f"Failed to get webhook info: {e}", status=500, mimetype="text/plain")
 
 
+# ── Request Dispatcher (Handles both direct paths and Vercel rewrites) ────────
 
-# ── Intelligent Catch-All / 404 Fallback ───────────────────────────────────────
+def _dispatch(path=""):
 
-@app.errorhandler(404)
-def handle_404(e):
-    """
-    Handle Vercel path rewrites seamlessly so that 404 Not Found is never shown.
-    """
     clues = [
+        path,
         request.path,
         request.environ.get("PATH_INFO", ""),
         request.headers.get("x-matched-path", ""),
@@ -499,8 +482,20 @@ def handle_404(e):
     return index()
 
 
+@app.route("/", defaults={"path": ""}, methods=["GET", "POST"])
+@app.route("/<path:path>", methods=["GET", "POST"])
+def catch_all(path=""):
+    return _dispatch(path)
+
+
+@app.errorhandler(404)
+def handle_404(e):
+    return _dispatch(request.path)
+
+
 # Explicit WSGI callable for Granian / Vercel
 application = app
+
 
 
 
