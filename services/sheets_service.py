@@ -45,17 +45,18 @@ MONTH_TABS = {
     12: ["December", "Des"],
 }
 
-# Column mapping for expense table (K=11, L=12, M=13, N=14, O=15)
-# Actual sheet columns: K=No, L=Date, M=Title, N=Amount, O=Category
+# Column mapping for expense table (K=11, L=12, M=13, N=14, O=15, P=16)
+# Actual sheet columns: K=No, L=Date, M=Title, N=Description, O=Amount, P=Category
 # Range: rows 5 to 34 (maximum 30 transactions)
-EXPENSE_START_ROW = 5   # Row 5 (K5:O5)
-EXPENSE_END_ROW = 34    # Row 34 (K34:O34)
+EXPENSE_START_ROW = 5   # Row 5 (K5:P5)
+EXPENSE_END_ROW = 34    # Row 34 (K34:P34)
 MAX_EXPENSE_TRANSACTIONS = 30
 EXPENSE_COL_NO = 11     # K  - Row number (K5:K34)
 EXPENSE_COL_DATE = 12   # L  - Date (L5:L34)
-EXPENSE_COL_DESC = 13   # M  - Description / Title (M5:M34)
-EXPENSE_COL_AMT = 14    # N  - Amount (N5:N34)
-EXPENSE_COL_CAT = 15    # O  - Category (O5:O34)
+EXPENSE_COL_TITLE = 13  # M  - Title / Merchant (M5:M34)
+EXPENSE_COL_DESC = 14   # N  - Description / Notes (N5:N34)
+EXPENSE_COL_AMT = 15    # O  - Amount (O5:O34)
+EXPENSE_COL_CAT = 16    # P  - Category (P5:P34)
 
 
 
@@ -106,15 +107,22 @@ def _get_worksheet(month: int = None) -> gspread.Worksheet:
 
 def append_expense(date: str, merchant: str, category: str, amount: int, notes: str = "", month: int = None) -> dict:
     """
-    Append a new expense row to the transaction table (K5:O34).
+    Append a new expense row to the transaction table (K5:P34).
+    Columns:
+      K: No
+      L: Date
+      M: Title (Merchant)
+      N: Description (Notes)
+      O: Amount
+      P: Category
     Limit: maximum 30 transactions.
     Returns {"success": True, "row": N, "no": N} or {"success": False, "error": "..."}
     """
     try:
         ws = _get_worksheet(month)
 
-        # Read existing expense rows (K5:O34)
-        existing = ws.get(f"K{EXPENSE_START_ROW}:O{EXPENSE_END_ROW}")
+        # Read existing expense rows (K5:P34)
+        existing = ws.get(f"K{EXPENSE_START_ROW}:P{EXPENSE_END_ROW}")
 
         # Count used rows and find the next empty slot
         used_count = 0
@@ -140,18 +148,18 @@ def append_expense(date: str, merchant: str, category: str, amount: int, notes: 
         if used_count >= MAX_EXPENSE_TRANSACTIONS or next_row > EXPENSE_END_ROW:
             return {
                 "success": False,
-                "error": f"⚠️ Batas maksimal {MAX_EXPENSE_TRANSACTIONS} transaksi tercapai (K{EXPENSE_START_ROW}:K{EXPENSE_END_ROW} penuh). Silakan hapus atau arsipkan transaksi lama di spreadsheet terlebih dahulu."
+                "error": f"⚠️ Batas maksimal {MAX_EXPENSE_TRANSACTIONS} transaksi tercapai (K{EXPENSE_START_ROW}:P{EXPENSE_END_ROW} penuh). Silakan hapus atau arsipkan transaksi lama di spreadsheet terlebih dahulu."
             }
 
         new_no = last_no + 1
-        description = f"{merchant}" + (f" - {notes}" if notes else "")
+        title = merchant
+        description = notes or ""
 
-        # Write the row
+        # Write the row: K=No, L=Date, M=Title, N=Description, O=Amount, P=Category
         ws.update(
-            f"K{next_row}:O{next_row}",
-            [[new_no, date, description, amount, category]]
+            f"K{next_row}:P{next_row}",
+            [[new_no, date, title, description, amount, category]]
         )
-
 
         return {"success": True, "row": next_row, "no": new_no}
 
@@ -255,17 +263,18 @@ def get_monthly_summary(month: int = None) -> dict:
         expense_total = ws.acell("E11").value  # Total Expenses area
         debt_total = ws.acell("E8").value
 
-        # Read all expense rows
-        expense_rows = ws.get(f"K{EXPENSE_START_ROW}:O{EXPENSE_END_ROW}")
+        # Read all expense rows (K5:P34)
+        expense_rows = ws.get(f"K{EXPENSE_START_ROW}:P{EXPENSE_END_ROW}")
         transactions = []
         for row in expense_rows:
             if row and str(row[0]).strip():
                 transactions.append({
                     "no": row[0] if len(row) > 0 else "",
                     "date": row[1] if len(row) > 1 else "",
-                    "description": row[2] if len(row) > 2 else "",
-                    "amount": row[3] if len(row) > 3 else "",
-                    "category": row[4] if len(row) > 4 and str(row[4]).strip() else "Others",
+                    "title": row[2] if len(row) > 2 else "",
+                    "description": row[3] if len(row) > 3 else "",
+                    "amount": row[4] if len(row) > 4 else "",
+                    "category": row[5] if len(row) > 5 and str(row[5]).strip() else "Others",
                 })
 
 
@@ -284,8 +293,8 @@ def inspect_sheet_structure(month: int = None) -> dict:
     """Read headers and sample rows to check exact column layout."""
     try:
         ws = _get_worksheet(month)
-        # Read rows 4 to 8, columns J to P
-        cells = ws.get("J4:P8")
+        # Read rows 4 to 8, columns J to Q
+        cells = ws.get("J4:Q8")
         return {"success": True, "cells": cells}
     except Exception as e:
         return {"success": False, "error": str(e)}
