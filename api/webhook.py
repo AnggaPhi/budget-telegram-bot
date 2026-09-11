@@ -374,11 +374,15 @@ async def handle_callback(update, context):
 # ── Flask Routes ──────────────────────────────────────────────────────────────
 
 @app.route("/", methods=["GET"])
+@app.route("/api", methods=["GET"])
+@app.route("/api/index", methods=["GET"])
+@app.route("/api/index.py", methods=["GET"])
 def index():
     return Response("Budget Bot is running!", status=200)
 
 
 @app.route("/debug", methods=["GET"])
+@app.route("/api/debug", methods=["GET"])
 def debug():
     """Health check — shows env var status without exposing secrets."""
     checks = {
@@ -386,6 +390,8 @@ def debug():
         "GEMINI_API_KEY": "SET" if os.environ.get("GEMINI_API_KEY") else "MISSING",
         "GOOGLE_SHEET_ID": "SET" if os.environ.get("GOOGLE_SHEET_ID") else "MISSING",
         "GOOGLE_SERVICE_ACCOUNT_JSON": "SET" if os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON") else "MISSING",
+        "request.path": request.path,
+        "request.headers.host": request.headers.get("Host", ""),
     }
     try:
         import services.gemini_service
@@ -440,6 +446,9 @@ def webhook():
 def set_webhook():
     import urllib.request as ur
     host = request.host_url.rstrip("/")
+    # Force HTTPS for Telegram webhooks
+    if host.startswith("http://"):
+        host = "https://" + host[7:]
     webhook_url = f"{host}/webhook"
     api_url = f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook?url={webhook_url}"
     try:
@@ -450,6 +459,32 @@ def set_webhook():
         return Response(f"Failed: {e}", status=500)
 
 
+# ── Intelligent Catch-All / 404 Fallback ───────────────────────────────────────
+
+@app.errorhandler(404)
+def handle_404(e):
+    """
+    Handle Vercel path rewrites seamlessly so that 404 Not Found is never shown.
+    """
+    clues = [
+        request.path,
+        request.environ.get("PATH_INFO", ""),
+        request.headers.get("x-matched-path", ""),
+        request.headers.get("x-forwarded-uri", ""),
+        request.args.get("action", ""),
+    ]
+    raw = " ".join(str(c) for c in clues).lower()
+
+    if request.method == "POST":
+        return webhook()
+    if "debug" in raw:
+        return debug()
+    if "set_webhook" in raw:
+        return set_webhook()
+    return index()
+
+
 # Explicit WSGI callable for Granian / Vercel
 application = app
+
 
