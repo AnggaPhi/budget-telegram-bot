@@ -37,8 +37,8 @@ Pastikan 4 variable ini sudah terdaftar untuk **Production**:
 
 Di Vercel Dashboard → **Settings** → **General**:
 - Cari bagian **Root Directory**
-- Pastikan diisi: `Testing/budget-telegram-bot` (jika repo GitHub berisi folder ini)
-- Klik **Save**
+- Pastikan nilainya **kosong** (atau `./`) karena seluruh file bot sekarang sudah berada di root repository.
+- Klik **Save** jika ada perubahan.
 
 ---
 
