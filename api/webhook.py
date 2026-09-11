@@ -42,7 +42,6 @@ app = Flask(__name__)
 
 # ── Lazy Telegram Application (only built on first real request) ──────────────
 _bot_app = None
-_bot_initialized = False
 
 
 def get_bot_app():
@@ -71,13 +70,14 @@ def get_bot_app():
     return _bot_app
 
 
-async def _process_update(update):
-    global _bot_initialized
+async def _process_update(payload):
+    """Run update inside proper application async lifecycle context."""
+    from telegram import Update
     bot_app = get_bot_app()
-    if not _bot_initialized:
-        await bot_app.initialize()
-        _bot_initialized = True
-    await bot_app.process_update(update)
+    async with bot_app:
+        update = Update.de_json(payload, bot_app.bot)
+        await bot_app.process_update(update)
+
 
 
 # ── Session store (ephemeral, resets on cold start) ───────────────────────────
@@ -425,19 +425,12 @@ def webhook():
         return Response("Invalid JSON", status=400)
 
     try:
-        from telegram import Update
-        bot_app = get_bot_app()
-        update = Update.de_json(payload, bot_app.bot)
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            loop.run_until_complete(_process_update(update))
-        finally:
-            loop.close()
+        asyncio.run(_process_update(payload))
     except Exception as e:
         logger.error(f"Webhook error: {e}\n{traceback.format_exc()}")
+        return Response(f"Error: {e}", status=500)
 
-    # Always return 200 to Telegram to prevent retry storms
+    # Return 200 to Telegram
     return Response("OK", status=200)
 
 
@@ -454,9 +447,27 @@ def set_webhook():
     try:
         with ur.urlopen(api_url) as resp:
             result = json.loads(resp.read())
-        return Response(f"Webhook set to: {webhook_url}\nTelegram: {result}", status=200)
+        return Response(
+            f"Webhook set to: {webhook_url}\nTelegram response: {json.dumps(result, indent=2)}",
+            status=200,
+            mimetype="text/plain",
+        )
     except Exception as e:
-        return Response(f"Failed: {e}", status=500)
+        return Response(f"Failed to set webhook: {e}", status=500, mimetype="text/plain")
+
+
+@app.route("/get_webhook_info", methods=["GET"])
+@app.route("/api/get_webhook_info", methods=["GET"])
+def get_webhook_info():
+    """Diagnostic endpoint to inspect Telegram's view of this webhook."""
+    import urllib.request as ur
+    api_url = f"https://api.telegram.org/bot{BOT_TOKEN}/getWebhookInfo"
+    try:
+        with ur.urlopen(api_url) as resp:
+            result = json.loads(resp.read())
+        return Response(json.dumps(result, indent=2), status=200, mimetype="application/json")
+    except Exception as e:
+        return Response(f"Failed to get webhook info: {e}", status=500, mimetype="text/plain")
 
 
 # ── Intelligent Catch-All / 404 Fallback ───────────────────────────────────────
@@ -479,6 +490,8 @@ def handle_404(e):
         return webhook()
     if "debug" in raw:
         return debug()
+    if "get_webhook_info" in raw:
+        return get_webhook_info()
     if "set_webhook" in raw:
         return set_webhook()
     return index()
@@ -486,5 +499,6 @@ def handle_404(e):
 
 # Explicit WSGI callable for Granian / Vercel
 application = app
+
 
 
