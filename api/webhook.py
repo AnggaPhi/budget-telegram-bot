@@ -445,7 +445,7 @@ def set_webhook():
     webhook_url = f"{host}/webhook"
     api_url = f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook?url={webhook_url}"
     try:
-        with ur.urlopen(api_url) as resp:
+        with ur.urlopen(api_url, timeout=10) as resp:
             result = json.loads(resp.read())
         return Response(
             f"Webhook set to: {webhook_url}\nTelegram response: {json.dumps(result, indent=2)}",
@@ -463,11 +463,12 @@ def get_webhook_info():
     import urllib.request as ur
     api_url = f"https://api.telegram.org/bot{BOT_TOKEN}/getWebhookInfo"
     try:
-        with ur.urlopen(api_url) as resp:
+        with ur.urlopen(api_url, timeout=10) as resp:
             result = json.loads(resp.read())
         return Response(json.dumps(result, indent=2), status=200, mimetype="application/json")
     except Exception as e:
         return Response(f"Failed to get webhook info: {e}", status=500, mimetype="text/plain")
+
 
 
 # ── Intelligent Catch-All / 404 Fallback ───────────────────────────────────────
