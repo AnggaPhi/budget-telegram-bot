@@ -305,22 +305,89 @@ async def handle_photo(update, context):
     await msg.edit_text(format_confirmation(data), parse_mode="Markdown", reply_markup=kb_confirm())
 
 
+def is_query_or_conversation(text: str) -> bool:
+    """Detect if the message is a question or conversational query rather than a new transaction."""
+    t = text.lower().strip()
+
+    # If it ends with or contains '?'
+    if "?" in t:
+        return True
+
+    # Strong query / summary / report keywords
+    query_patterns = [
+        r'\b(rangkum|rangkuman|rekap|summary)\b',
+        r'\b(berapa|gimana|bagaimana|apakah|ada\s+apa|apa\s+aja|apa\s+saja)\b',
+        r'\b(sisa\s+uang|sisa\s+saldo|saldo|balance)\b',
+        r'\b(total\s+(pengeluaran|pemasukan|belanja|income|expenses|hutang|utang))\b',
+        r'\b(pengeluaran|pemasukan|belanja|catatan)\s+(bulan|di\s*bulan|hari|kemarin)\b',
+        r'\b(ada\s+(hutang|utang|tagihan|cicilan))\b',
+        r'\b(daftar\s+transaksi|riwayat|history|catatan\s+keuangan)\b',
+        r'\b(cek|lihat|tampilkan|info)\b',
+        r'\b(halo|hai|hello|hi|siapa\s+kamu|kamu\s+siapa|bisa\s+apa|bantuan)\b',
+    ]
+    for pattern in query_patterns:
+        if re.search(pattern, t):
+            # Exception: if it starts with logging verbs followed by numbers like "bayar hutang 50000"
+            if re.match(r'^(bayar|beli|catat|tambah|kurang|dapat)\s+(hutang|utang|tagihan)\s+\d+', t):
+                return False
+            return True
+
+    # If it mentions "bulan lalu" or "bulan depan" without logging verbs + amounts
+    if re.search(r'\b(di\s*bulan\s+lalu|bulan\s+lalu|di\s*bulan\s+depan|bulan\s+depan)\b', t):
+        if not re.search(r'\b\d{3,}\b', t):  # No large numbers (e.g. 50000)
+            return True
+
+    return False
+
+
 async def handle_text(update, context):
-    from services.gemini_service import extract_from_text
+    from services.gemini_service import extract_from_text, answer_financial_query
+    from services.sheets_service import resolve_month_from_text, build_compact_month_context
+
     user_id = update.effective_user.id
     text = update.message.text.strip()
     session = sessions.get(user_id)
     if session and session.get("editing_field"):
         await _apply_edit_input(update, session, text)
         return
+
+    # 1. Check if user is asking a question or having a conversation
+    if is_query_or_conversation(text):
+        cleaned_lower = text.lower().strip()
+        # Zero-token quick response for greetings
+        if cleaned_lower in ("halo", "hai", "hi", "p", "ping", "assalamualaikum", "selamat pagi", "selamat siang", "selamat sore", "selamat malam") or re.match(r'^(halo|hai|hi|hello)\b.*(bisa apa|siapa kamu)', cleaned_lower):
+            await update.message.reply_text(
+                "👋 Halo! Saya asisten keuangan pribadi Anda.\n\n"
+                "Anda bisa:\n"
+                "• Catat pengeluaran: contoh `Beli kopi 25000` atau kirim foto struk 📸\n"
+                "• Tanya data keuangan: contoh `Rangkuman pengeluaran bulan lalu`, `Berapa hutang bulan depan`, atau `Berapa sisa uangku` 💬"
+            )
+            return
+
+        msg = await update.message.reply_text("🤖 Mengecek data keuangan... ⏳")
+        target_month = resolve_month_from_text(text)
+        context_str = build_compact_month_context(target_month)
+        ai_reply = answer_financial_query(text, context_str)
+        try:
+            await msg.edit_text(ai_reply, parse_mode="Markdown")
+        except Exception:
+            await msg.edit_text(ai_reply)
+        return
+
+    # 2. Otherwise process as a transaction to record
     msg = await update.message.reply_text("🤖 Menganalisis... ⏳")
     data = extract_from_text(text)
-    if "error" in data:
-        await msg.edit_text(
-            f"❌ Gagal memproses:\n`{data['error']}`\n\nCoba tulis lebih detail.",
-            parse_mode="Markdown",
-        )
+    if "error" in data or not data.get("amount"):
+        # Fallback: if AI extraction didn't detect an amount, treat as conversational query
+        target_month = resolve_month_from_text(text)
+        context_str = build_compact_month_context(target_month)
+        ai_reply = answer_financial_query(text, context_str)
+        try:
+            await msg.edit_text(ai_reply, parse_mode="Markdown")
+        except Exception:
+            await msg.edit_text(ai_reply)
         return
+
     sessions[user_id] = {"data": data, "editing_field": None}
     await msg.edit_text(format_confirmation(data), parse_mode="Markdown", reply_markup=kb_confirm())
 

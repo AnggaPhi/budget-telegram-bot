@@ -193,3 +193,37 @@ def _parse_response(raw: str) -> dict:
     except json.JSONDecodeError as e:
         return {"error": f"Failed to parse AI response: {e}", "raw": raw}
 
+
+FINANCIAL_ASSISTANT_SYSTEM_PROMPT = """Anda adalah asisten keuangan pribadi yang cerdas, ramah, dan ringkas.
+Tugas Anda adalah menjawab pertanyaan pengguna HANYA berdasarkan konteks data spreadsheet yang diberikan.
+
+Aturan Ketat:
+1. Jawab secara padat, jelas, ramah, dalam Bahasa Indonesia (maksimal 2-4 kalimat atau poin ringkas).
+2. Sebutkan angka uang dengan format Rupiah (contoh: Rp 50.000).
+3. Jika pertanyaan menanyakan hal di luar data keuangan / spreadsheet yang diberikan (misal: pengetahuan umum, coding, resep, ngobrol di luar keuangan), tolak dengan sopan:
+   "Maaf, saya hanya asisten keuangan pribadi Anda. Saya hanya bisa menjawab pertanyaan seputar data keuangan di spreadsheet Anda."
+4. Jangan mengarang data yang tidak tercantum di konteks spreadsheet.
+"""
+
+
+def answer_financial_query(user_message: str, sheet_context: str) -> str:
+    """
+    Generate a concise, friendly conversational response based strictly on spreadsheet data.
+    Keeps token consumption as low as possible.
+    """
+    user_prompt = f"{sheet_context}\n\nPertanyaan: \"{user_message}\"\nJawaban:"
+    messages = [
+        {"role": "system", "content": FINANCIAL_ASSISTANT_SYSTEM_PROMPT},
+        {"role": "user", "content": user_prompt}
+    ]
+
+    try:
+        if os.environ.get("OPENROUTER_API_KEY"):
+            return _call_openrouter(messages).strip()
+        else:
+            full_prompt = f"{FINANCIAL_ASSISTANT_SYSTEM_PROMPT}\n\n{user_prompt}"
+            return _call_gemini(full_prompt).strip()
+    except Exception as e:
+        return f"Maaf, terjadi kendala saat memproses: {e}"
+
+
