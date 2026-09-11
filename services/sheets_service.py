@@ -264,3 +264,15 @@ def get_monthly_summary(month: int = None) -> dict:
 
     except Exception as e:
         return {"success": False, "error": str(e)}
+
+
+def inspect_sheet_structure(month: int = None) -> dict:
+    """Read headers and sample rows to check exact column layout."""
+    try:
+        ws = _get_worksheet(month)
+        # Read rows 4 to 8, columns J to P
+        cells = ws.get("J4:P8")
+        return {"success": True, "cells": cells}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+

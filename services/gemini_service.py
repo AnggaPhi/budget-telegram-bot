@@ -62,14 +62,20 @@ def _call_openrouter(messages: list) -> str:
     if not api_key:
         raise RuntimeError("OPENROUTER_API_KEY environment variable is not set.")
 
-    # Free vision model on OpenRouter:
+    # Active free models on OpenRouter with multimodal vision & text support:
     model = os.environ.get(
         "OPENROUTER_MODEL",
-        "meta-llama/llama-3.2-11b-vision-instruct:free"
+        "google/gemma-4-31b-it:free"
     )
 
     payload = {
         "model": model,
+        "models": [
+            model,
+            "google/gemma-4-26b-a4b-it:free",
+            "inclusionai/ling-3.0-flash-vl:free",
+            "nvidia/nemotron-3.5-lightning:free",
+        ],
         "messages": messages,
         "temperature": 0.1,
     }
@@ -88,12 +94,17 @@ def _call_openrouter(messages: list) -> str:
         method="POST",
     )
 
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        res_data = json.loads(resp.read().decode("utf-8"))
-        choices = res_data.get("choices", [])
-        if not choices:
-            raise RuntimeError(f"OpenRouter empty response: {res_data}")
-        return choices[0]["message"]["content"]
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            res_data = json.loads(resp.read().decode("utf-8"))
+            choices = res_data.get("choices", [])
+            if not choices:
+                raise RuntimeError(f"OpenRouter empty response: {res_data}")
+            return choices[0]["message"]["content"]
+    except urllib.error.HTTPError as e:
+        err_msg = e.read().decode("utf-8", errors="ignore")
+        raise RuntimeError(f"OpenRouter error {e.code}: {err_msg}")
+
 
 
 def _call_gemini(prompt: str, image_bytes: bytes = None, mime_type: str = "image/jpeg") -> str:

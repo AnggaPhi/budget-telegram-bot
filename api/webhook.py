@@ -396,8 +396,11 @@ def debug():
     try:
         import services.sheets_service
         checks["sheets_service import"] = "OK"
+        sheet_info = services.sheets_service.inspect_sheet_structure()
+        checks["sheet_rows_J_to_P"] = json.dumps(sheet_info.get("cells", []))
     except Exception as e:
         checks["sheets_service import"] = f"FAIL: {e}"
+
     try:
         get_bot_app()
         checks["telegram_bot init"] = "OK"
