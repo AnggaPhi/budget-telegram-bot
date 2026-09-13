@@ -457,6 +457,7 @@ def debug():
         checks["sheets"] = json.dumps(sheet_info.get("sheets", []))
         checks["sheet_rows_J_to_P"] = json.dumps(sheet_info.get("cells", []))
         checks["alloc_B6_F14"] = json.dumps(sheet_info.get("alloc_B6_F14", []))
+        checks["alloc_oct"] = json.dumps(sheet_info.get("alloc_oct", []))
     except Exception as e:
         checks["sheets_service import"] = f"FAIL: {e}"
 

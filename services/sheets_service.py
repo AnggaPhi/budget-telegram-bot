@@ -348,6 +348,11 @@ def inspect_sheet_structure(month: int = None) -> dict:
         # Read rows 4 to 8, columns J to Q
         cells = ws.get("J4:Q8")
         alloc_cells = ws.get("B6:F14")
+        try:
+            oct_ws = _get_worksheet(10)
+            alloc_oct = oct_ws.get("B6:F14")
+        except Exception as e:
+            alloc_oct = f"Error: {e}"
         income_raw = ws.acell("I25").value
         expenses_raw = ws.acell("I10").value
         return {
@@ -355,6 +360,7 @@ def inspect_sheet_structure(month: int = None) -> dict:
             "sheets": sheet_titles,
             "cells": cells,
             "alloc_B6_F14": alloc_cells,
+            "alloc_oct": alloc_oct,
             "I10_expenses": expenses_raw,
             "I25_income": income_raw,
             "money_left": _parse_cell_number(income_raw) - _parse_cell_number(expenses_raw),
