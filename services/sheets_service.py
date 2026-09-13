@@ -342,13 +342,19 @@ def inspect_sheet_structure(month: int = None) -> dict:
     """Read headers and sample rows to check exact column layout and summary cells."""
     try:
         ws = _get_worksheet(month)
+        client = _get_client()
+        ss = client.open_by_key(SHEET_ID)
+        sheet_titles = [s.title for s in ss.worksheets()]
         # Read rows 4 to 8, columns J to Q
         cells = ws.get("J4:Q8")
+        alloc_cells = ws.get("B6:F14")
         income_raw = ws.acell("I25").value
         expenses_raw = ws.acell("I10").value
         return {
             "success": True,
+            "sheets": sheet_titles,
             "cells": cells,
+            "alloc_B6_F14": alloc_cells,
             "I10_expenses": expenses_raw,
             "I25_income": income_raw,
             "money_left": _parse_cell_number(income_raw) - _parse_cell_number(expenses_raw),
