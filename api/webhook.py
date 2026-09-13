@@ -66,6 +66,9 @@ def get_bot_app():
         _bot_app.add_handler(CommandHandler("summary", cmd_summary))
         _bot_app.add_handler(CommandHandler("balance", cmd_balance))
         _bot_app.add_handler(CommandHandler("sisa", cmd_balance))
+        _bot_app.add_handler(CommandHandler("credit", cmd_credit))
+        _bot_app.add_handler(CommandHandler("debt", cmd_credit))
+        _bot_app.add_handler(CommandHandler("hutang", cmd_credit))
         _bot_app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
         _bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
         _bot_app.add_handler(CallbackQueryHandler(handle_callback))
@@ -189,6 +192,7 @@ async def cmd_start(update, context):
         "💬 *Teks bebas* → contoh: `Beli makan siang 25000`\n\n"
         "📊 /summary — Ringkasan bulan ini\n"
         "💰 /balance — Sisa uang (Income - Expenses)\n"
+        "💳 /credit — Cek tagihan hutang & cicilan\n"
         "❓ /help — Bantuan lengkap",
         parse_mode="Markdown",
     )
@@ -206,6 +210,7 @@ async def cmd_help(update, context):
         "*Commands:*\n"
         "/summary — Ringkasan transaksi & keuangan bulan ini\n"
         "/balance — Cek sisa uang (Income I25 - Expenses I10)\n"
+        "/credit — Cek tagihan hutang & cicilan (contoh: `/credit`, `/credit oct`, `/credit depan`)\n"
         "/start — Mulai ulang\n"
         "/help — Panduan ini",
         parse_mode="Markdown",
@@ -283,6 +288,72 @@ async def cmd_balance(update, context):
         f"{money_icon} *Sisa Uang (Money Left):* `{format_amount(money_left)}`"
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
+
+
+def kb_credit_nav(month: int):
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    from services.sheets_service import MONTH_NAME_MAP_ID
+    prev_m = 12 if month == 1 else month - 1
+    next_m = 1 if month == 12 else month + 1
+    prev_name = MONTH_NAME_MAP_ID.get(prev_m, str(prev_m))[:3]
+    next_name = MONTH_NAME_MAP_ID.get(next_m, str(next_m))[:3]
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton(f"◀️ {prev_name}", callback_data=f"credit_nav_{prev_m}"),
+        InlineKeyboardButton(f"{next_name} ▶️", callback_data=f"credit_nav_{next_m}"),
+    ]])
+
+
+def format_credit_message(result: dict) -> str:
+    if not result.get("success"):
+        err = result.get("error", "Terjadi kesalahan.")
+        return f"❌ Gagal mengambil data hutang & cicilan:\n`{err}`"
+
+    month_name = result.get("month_name", "Bulan ini")
+    year = datetime.now().year
+    items = result.get("items", [])
+    total = result.get("total", 0)
+
+    lines = [
+        f"💳 *Daftar Tagihan Hutang & Cicilan*",
+        f"📅 Periode: *{month_name} {year}*",
+        "━━━━━━━━━━━━━━━━━━",
+    ]
+
+    unpaid = [it for it in items if it["amount"] > 0]
+    paid = [it for it in items if it["amount"] == 0]
+
+    if not items:
+        lines.append("ℹ️ _Tidak ada data hutang/cicilan pada sheet bulan ini._")
+    else:
+        if unpaid:
+            for it in unpaid:
+                due = f" *(Jatuh tempo: {it['due_date']})*" if it.get("due_date") else ""
+                lines.append(f"🔴 *{it['label']}*: `{format_amount(it['amount'])}`{due}")
+        else:
+            lines.append("🎉 *Semua tagihan lunas untuk bulan ini!*")
+
+        if paid:
+            lines.append("\n*Sudah Lunas / Rp 0:*")
+            for it in paid:
+                lines.append(f"  🟢 {it['label']}: `Rp 0`")
+
+    lines += [
+        "━━━━━━━━━━━━━━━━━━",
+        f"💰 *Total Tagihan (Priority A):* `{format_amount(total)}`",
+    ]
+    return "\n".join(lines)
+
+
+async def cmd_credit(update, context):
+    from services.sheets_service import get_debt_and_credit, parse_month_arg
+    arg = " ".join(context.args).strip() if context.args else None
+    target_month = parse_month_arg(arg)
+
+    msg = await update.message.reply_text("⏳ Mengambil data hutang & cicilan...")
+    result = get_debt_and_credit(target_month)
+    msg_text = format_credit_message(result)
+    reply_markup = kb_credit_nav(target_month)
+    await msg.edit_text(msg_text, parse_mode="Markdown", reply_markup=reply_markup)
 
 
 # ── Message Handlers ──────────────────────────────────────────────────────────
@@ -427,6 +498,17 @@ async def handle_callback(update, context):
         }
         await query.edit_message_text(prompts.get(field, "Masukkan nilai baru:"))
 
+    elif cb.startswith("credit_nav_"):
+        try:
+            target_month = int(cb.split("_")[2])
+        except (IndexError, ValueError):
+            target_month = datetime.now().month
+        from services.sheets_service import get_debt_and_credit
+        result = get_debt_and_credit(target_month)
+        msg_text = format_credit_message(result)
+        reply_markup = kb_credit_nav(target_month)
+        await query.edit_message_text(msg_text, parse_mode="Markdown", reply_markup=reply_markup)
+
 
 # ── Endpoint Handlers ─────────────────────────────────────────────────────────
 
@@ -454,10 +536,10 @@ def debug():
         import services.sheets_service
         checks["sheets_service import"] = "OK"
         sheet_info = services.sheets_service.inspect_sheet_structure()
-        checks["sheets"] = json.dumps(sheet_info.get("sheets", []))
         checks["sheet_rows_J_to_P"] = json.dumps(sheet_info.get("cells", []))
-        checks["alloc_B6_F14"] = json.dumps(sheet_info.get("alloc_B6_F14", []))
-        checks["alloc_oct"] = json.dumps(sheet_info.get("alloc_oct", []))
+        checks["alloc_B6_E11"] = json.dumps(sheet_info.get("alloc_B6_E11", []))
+        credit_sep = services.sheets_service.get_debt_and_credit()
+        checks["test_credit_sep"] = f"Total: {credit_sep.get('total')}, items: {len(credit_sep.get('items', []))}"
     except Exception as e:
         checks["sheets_service import"] = f"FAIL: {e}"
 

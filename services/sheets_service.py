@@ -338,29 +338,154 @@ def get_monthly_summary(month: int = None) -> dict:
         return {"success": False, "error": str(e)}
 
 
+MONTH_NAME_MAP_ID = {
+    1: "Januari", 2: "Februari", 3: "Maret", 4: "April", 5: "Mei", 6: "Juni",
+    7: "Juli", 8: "Agustus", 9: "September", 10: "Oktober", 11: "November", 12: "Desember"
+}
+
+MONTH_KEYWORDS = {
+    1: ["januari", "january", "jan"],
+    2: ["februari", "february", "feb"],
+    3: ["maret", "march", "mar"],
+    4: ["april", "apr"],
+    5: ["mei", "may"],
+    6: ["juni", "june", "jun"],
+    7: ["juli", "july", "jul"],
+    8: ["agustus", "august", "agt", "aug"],
+    9: ["september", "sep"],
+    10: ["oktober", "october", "okt", "oct"],
+    11: ["november", "nov"],
+    12: ["desember", "december", "des", "dec"],
+}
+
+
+def parse_month_arg(arg: str = None) -> int:
+    """
+    Parse an optional month argument into month number (1-12).
+    Defaults to current month if None, empty, or unparseable.
+    Supports relative terms ("depan", "next", "lalu", "prev", "kemarin").
+    """
+    curr = datetime.now().month
+    if not arg or not str(arg).strip():
+        return curr
+
+    t = str(arg).lower().strip()
+
+    # Relative terms
+    if any(w in t for w in ("depan", "next")):
+        return 1 if curr == 12 else curr + 1
+    if any(w in t for w in ("lalu", "prev", "kemarin", "last")):
+        return 12 if curr == 1 else curr - 1
+    if any(w in t for w in ("ini", "curr", "current", "now")):
+        return curr
+
+    # Explicit integer (1-12)
+    digits = re.sub(r'[^\d]', '', t)
+    if digits:
+        try:
+            val = int(digits)
+            if 1 <= val <= 12:
+                return val
+        except ValueError:
+            pass
+
+    # Named months
+    for m_num, aliases in MONTH_KEYWORDS.items():
+        for alias in aliases:
+            if alias in t:
+                return m_num
+
+    return curr
+
+
+def get_debt_and_credit(month: int = None) -> dict:
+    """
+    Read Priority A Allocations / Debt rows from B6:E11.
+    Row 6: Total A (Cell E6)
+    Rows 7-11:
+      Col B: Due date (Jatuh tempo)
+      Col C: Label / Creditor name
+      Col D: ':' separator
+      Col E: Amount
+    """
+    try:
+        if month is None:
+            month = datetime.now().month
+
+        ws = _get_worksheet(month)
+        raw_rows = ws.get("B6:E11")
+
+        total = 0
+        total_raw = ""
+        items = []
+
+        if raw_rows:
+            # Row 6: Total A header
+            header_row = raw_rows[0]
+            if len(header_row) >= 4:
+                total_raw = str(header_row[3]).strip()
+                total = _parse_cell_number(total_raw)
+            elif len(header_row) >= 2:
+                total_raw = str(header_row[-1]).strip()
+                total = _parse_cell_number(total_raw)
+
+            # Rows 7 to 11
+            for row in raw_rows[1:]:
+                due_date = str(row[0]).strip() if len(row) > 0 else ""
+                label = str(row[1]).strip() if len(row) > 1 else ""
+
+                if not label or label in ("Total A", "B", "Total B"):
+                    continue
+
+                val = row[3] if len(row) > 3 else (row[2] if len(row) > 2 and str(row[2]).strip() != ":" else "")
+                amount = _parse_cell_number(val)
+
+                items.append({
+                    "label": label,
+                    "due_date": due_date,
+                    "amount": amount,
+                    "raw_amount": str(val).strip(),
+                    "is_paid": amount == 0,
+                })
+
+        # If total cell was 0 or empty but items have positive amount, calculate sum
+        calculated_total = sum(it["amount"] for it in items if it["amount"] > 0)
+        if total == 0 and calculated_total > 0:
+            total = calculated_total
+
+        return {
+            "success": True,
+            "month": month,
+            "month_name": MONTH_NAME_MAP_ID.get(month, f"Bulan {month}"),
+            "total": total,
+            "total_raw": total_raw,
+            "items": items,
+        }
+
+    except Exception as e:
+        return {
+            "success": False,
+            "month": month,
+            "month_name": MONTH_NAME_MAP_ID.get(month, f"Bulan {month}") if month else "",
+            "error": str(e),
+            "items": [],
+            "total": 0,
+        }
+
+
 def inspect_sheet_structure(month: int = None) -> dict:
     """Read headers and sample rows to check exact column layout and summary cells."""
     try:
         ws = _get_worksheet(month)
-        client = _get_client()
-        ss = client.open_by_key(SHEET_ID)
-        sheet_titles = [s.title for s in ss.worksheets()]
         # Read rows 4 to 8, columns J to Q
         cells = ws.get("J4:Q8")
-        alloc_cells = ws.get("B6:F14")
-        try:
-            oct_ws = _get_worksheet(10)
-            alloc_oct = oct_ws.get("B6:F14")
-        except Exception as e:
-            alloc_oct = f"Error: {e}"
+        alloc_cells = ws.get("B6:E11")
         income_raw = ws.acell("I25").value
         expenses_raw = ws.acell("I10").value
         return {
             "success": True,
-            "sheets": sheet_titles,
             "cells": cells,
-            "alloc_B6_F14": alloc_cells,
-            "alloc_oct": alloc_oct,
+            "alloc_B6_E11": alloc_cells,
             "I10_expenses": expenses_raw,
             "I25_income": income_raw,
             "money_left": _parse_cell_number(income_raw) - _parse_cell_number(expenses_raw),
