@@ -69,6 +69,9 @@ def get_bot_app():
         _bot_app.add_handler(CommandHandler("credit", cmd_credit))
         _bot_app.add_handler(CommandHandler("debt", cmd_credit))
         _bot_app.add_handler(CommandHandler("hutang", cmd_credit))
+        _bot_app.add_handler(CommandHandler("link", cmd_link))
+        _bot_app.add_handler(CommandHandler("sheet", cmd_link))
+        _bot_app.add_handler(CommandHandler("spreadsheet", cmd_link))
         _bot_app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
         _bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
         _bot_app.add_handler(CallbackQueryHandler(handle_callback))
@@ -193,6 +196,7 @@ async def cmd_start(update, context):
         "📊 /summary — Ringkasan bulan ini\n"
         "💰 /balance — Sisa uang (Income - Expenses)\n"
         "💳 /credit — Cek tagihan hutang & cicilan\n"
+        "🔗 /link — Link langsung ke Google Spreadsheet\n"
         "❓ /help — Bantuan lengkap",
         parse_mode="Markdown",
     )
@@ -211,6 +215,7 @@ async def cmd_help(update, context):
         "/summary — Ringkasan transaksi & keuangan bulan ini\n"
         "/balance — Cek sisa uang (Income I25 - Expenses I10)\n"
         "/credit — Cek tagihan hutang & cicilan (contoh: `/credit`, `/credit oct`, `/credit depan`)\n"
+        "/link — Buka link langsung Google Spreadsheet\n"
         "/start — Mulai ulang\n"
         "/help — Panduan ini",
         parse_mode="Markdown",
@@ -263,11 +268,20 @@ async def cmd_summary(update, context):
         f"📉 *Expenses (I10):* `{format_amount(expenses)}`",
         f"{money_icon} *Sisa Uang (Money Left):* `{format_amount(money_left)}`",
     ]
-    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    from services.sheets_service import SHEET_ID
+    sheet_url = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}"
+    kb = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("📊 Buka Sheet", url=sheet_url),
+            InlineKeyboardButton("❌ Tutup", callback_data="close_message"),
+        ]
+    ])
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=kb)
 
 
 async def cmd_balance(update, context):
-    from services.sheets_service import get_money_left
+    from services.sheets_service import get_money_left, SHEET_ID
     await update.message.reply_text("⏳ Menghitung sisa uang...")
     result = get_money_left()
     if not result.get("success"):
@@ -287,20 +301,35 @@ async def cmd_balance(update, context):
         f"━━━━━━━━━━━━━━━━━━\n"
         f"{money_icon} *Sisa Uang (Money Left):* `{format_amount(money_left)}`"
     )
-    await update.message.reply_text(msg, parse_mode="Markdown")
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    sheet_url = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}"
+    kb = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("📊 Buka Sheet", url=sheet_url),
+            InlineKeyboardButton("❌ Tutup", callback_data="close_message"),
+        ]
+    ])
+    await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=kb)
 
 
 def kb_credit_nav(month: int):
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-    from services.sheets_service import MONTH_NAME_MAP_ID
+    from services.sheets_service import MONTH_NAME_MAP_ID, SHEET_ID
     prev_m = 12 if month == 1 else month - 1
     next_m = 1 if month == 12 else month + 1
     prev_name = MONTH_NAME_MAP_ID.get(prev_m, str(prev_m))[:3]
     next_name = MONTH_NAME_MAP_ID.get(next_m, str(next_m))[:3]
-    return InlineKeyboardMarkup([[
-        InlineKeyboardButton(f"◀️ {prev_name}", callback_data=f"credit_nav_{prev_m}"),
-        InlineKeyboardButton(f"{next_name} ▶️", callback_data=f"credit_nav_{next_m}"),
-    ]])
+    sheet_url = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}"
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(f"◀️ {prev_name}", callback_data=f"credit_nav_{prev_m}"),
+            InlineKeyboardButton(f"{next_name} ▶️", callback_data=f"credit_nav_{next_m}"),
+        ],
+        [
+            InlineKeyboardButton("📊 Buka Sheet", url=sheet_url),
+            InlineKeyboardButton("❌ Tutup", callback_data="close_message"),
+        ]
+    ])
 
 
 def format_credit_message(result: dict) -> str:
@@ -354,6 +383,24 @@ async def cmd_credit(update, context):
     msg_text = format_credit_message(result)
     reply_markup = kb_credit_nav(target_month)
     await msg.edit_text(msg_text, parse_mode="Markdown", reply_markup=reply_markup)
+
+
+async def cmd_link(update, context):
+    from services.sheets_service import SHEET_ID
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    sheet_url = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}"
+    msg = (
+        "📊 *Google Spreadsheet Keuangan*\n\n"
+        "Klik tombol di bawah atau link berikut untuk membuka spreadsheet Anda:\n"
+        f"🔗 [Buka Google Sheets]({sheet_url})"
+    )
+    kb = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("📊 Buka Google Sheets", url=sheet_url),
+            InlineKeyboardButton("❌ Tutup", callback_data="close_message"),
+        ]
+    ])
+    await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=kb)
 
 
 # ── Message Handlers ──────────────────────────────────────────────────────────
@@ -508,6 +555,12 @@ async def handle_callback(update, context):
         msg_text = format_credit_message(result)
         reply_markup = kb_credit_nav(target_month)
         await query.edit_message_text(msg_text, parse_mode="Markdown", reply_markup=reply_markup)
+
+    elif cb == "close_message":
+        try:
+            await query.message.delete()
+        except Exception:
+            await query.edit_message_text("❌ Pesan ditutup.")
 
 
 # ── Endpoint Handlers ─────────────────────────────────────────────────────────
