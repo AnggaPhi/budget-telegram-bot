@@ -95,6 +95,40 @@ sessions = {}
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+def normalize_date(date_str: str) -> str:
+    """Normalize date to M/D/YYYY so Google Sheets formats it correctly as Sep-19."""
+    if not date_str:
+        now = datetime.now()
+        return f"{now.month}/{now.day}/{now.year}"
+    
+    s = str(date_str).strip()
+    # Try ISO YYYY-MM-DD
+    m_iso = re.match(r'^(\d{4})[/-](\d{1,2})[/-](\d{1,2})$', s)
+    if m_iso:
+        yr, mth, day = int(m_iso.group(1)), int(m_iso.group(2)), int(m_iso.group(3))
+        return f"{mth}/{day}/{yr}"
+        
+    # Try DD/MM/YYYY or M/D/YYYY
+    m = re.match(r'^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$', s)
+    if m:
+        p1, p2, yr = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        # If p1 > 12, it must be DD/MM/YYYY -> return MM/DD/YYYY
+        if p1 > 12:
+            return f"{p2}/{p1}/{yr}"
+        # If p2 > 12, it must be M/D/YYYY -> return M/D/YYYY
+        elif p2 > 12:
+            return f"{p1}/{p2}/{yr}"
+        else:
+            # Ambiguous (e.g. 9/5/2026 vs 5/9/2026). If month is around now, guess p1 is month.
+            now = datetime.now()
+            if p1 == now.month:
+                return f"{p1}/{p2}/{yr}"
+            elif p2 == now.month:
+                return f"{p2}/{p1}/{yr}"
+            return f"{p1}/{p2}/{yr}"
+    return s
+
+
 def format_amount(amount):
     try:
         amt = int(amount)
@@ -495,7 +529,7 @@ async def handle_callback(update, context):
             return
         data = session["data"]
         tx_type = (data.get("type") or "expense").lower()
-        date = data.get("date") or datetime.now().strftime("%d/%m/%Y")
+        date = normalize_date(data.get("date"))
         merchant = data.get("merchant") or "Unknown"
         amount = int(data.get("amount") or 0)
         category = data.get("category") or "Others"

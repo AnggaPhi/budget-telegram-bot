@@ -38,7 +38,7 @@ Transaction types: expense, income, debt (money I owe someone), credit (money so
 Extract the transaction details and return ONLY a valid JSON object with these fields:
 {{
   "type": "expense" | "income" | "debt" | "credit" | "asset",
-  "date": "DD/MM/YYYY",
+  "date": "M/D/YYYY",
   "merchant": "store or person name",
   "amount": 12345 (raw integer only, no currency symbol, no dots/commas),
   "category": "one of the categories above (for expense only)",
@@ -47,6 +47,7 @@ Extract the transaction details and return ONLY a valid JSON object with these f
 }}
 
 Rules:
+- Format date strictly as Month/Day/Year (e.g., 9/19/2026, 9/25/2026).
 - Understand Indonesian number shorthands:
   * "k", "rb", "ribu" = thousand (e.g. "12k" -> 12000, "12.5k" -> 12500, "25rb" -> 25000, "500k" -> 500000)
   * "jt", "juta", "m" = million (e.g. "1.5jt" -> 1500000, "2jt" -> 2000000)
