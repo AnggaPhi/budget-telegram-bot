@@ -106,9 +106,29 @@ def format_amount(amount):
 
 
 def parse_amount(val) -> int:
+    """Parse integer amount with support for k/rb (thousand) and jt/m (million)."""
     if val is None:
         return 0
-    s = str(val).replace("Rp", "").replace("IDR", "").strip()
+    s = str(val).lower().replace("rp", "").replace("idr", "").strip()
+
+    # Match 'k', 'rb', 'ribu'
+    m_k = re.search(r'([\d]+(?:[.,]\d+)?)\s*(k|rb|ribu)\b', s)
+    if m_k:
+        num_str = m_k.group(1).replace(",", ".")
+        try:
+            return int(float(num_str) * 1000)
+        except ValueError:
+            pass
+
+    # Match 'jt', 'juta', 'm', 'mio', 'million'
+    m_m = re.search(r'([\d]+(?:[.,]\d+)?)\s*(jt|juta|m|mio|million)\b', s)
+    if m_m:
+        num_str = m_m.group(1).replace(",", ".")
+        try:
+            return int(float(num_str) * 1000000)
+        except ValueError:
+            pass
+
     s = re.sub(r'[,.]00$', '', s)
     digits = re.sub(r'[^\d]', '', s)
     return int(digits) if digits else 0

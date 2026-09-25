@@ -40,13 +40,17 @@ Extract the transaction details and return ONLY a valid JSON object with these f
   "type": "expense" | "income" | "debt" | "credit" | "asset",
   "date": "DD/MM/YYYY",
   "merchant": "store or person name",
-  "amount": 12345 (number only, no currency symbol, no dots/commas),
+  "amount": 12345 (raw integer only, no currency symbol, no dots/commas),
   "category": "one of the categories above (for expense only)",
   "notes": "brief description",
   "confidence": "high" | "medium" | "low"
 }}
 
 Rules:
+- Understand Indonesian number shorthands:
+  * "k", "rb", "ribu" = thousand (e.g. "12k" -> 12000, "12.5k" -> 12500, "25rb" -> 25000, "500k" -> 500000)
+  * "jt", "juta", "m" = million (e.g. "1.5jt" -> 1500000, "2jt" -> 2000000)
+- Always convert amount to a clean integer (e.g. 12k must become 12000, not 12)
 - For income: merchant = source of income (e.g. "Salary", "Freelance")
 - For debt: merchant = person I borrowed from, notes = what for
 - For credit: merchant = person who owes me, notes = what for  
@@ -126,7 +130,7 @@ def _call_gemini(prompt: str, image_bytes: bytes = None, mime_type: str = "image
 
     import google.generativeai as genai
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel("gemini-1.5-flash")
+    model = genai.GenerativeModel("gemini-2.0-flash")
 
     if image_bytes:
         image_part = {"mime_type": mime_type, "data": image_bytes}
@@ -181,6 +185,36 @@ def extract_from_text(text: str) -> dict:
         return {"error": str(e)}
 
 
+def parse_shorthand_amount(val) -> int:
+    """Parse number with support for k/rb (thousand) and jt/m (million)."""
+    if val is None:
+        return 0
+    s = str(val).lower().replace("rp", "").replace("idr", "").strip()
+
+    # Match 'k', 'rb', 'ribu'
+    m_k = re.search(r'([\d]+(?:[.,]\d+)?)\s*(k|rb|ribu)\b', s)
+    if m_k:
+        num_str = m_k.group(1).replace(",", ".")
+        try:
+            return int(float(num_str) * 1000)
+        except ValueError:
+            pass
+
+    # Match 'jt', 'juta', 'm', 'mio', 'million'
+    m_m = re.search(r'([\d]+(?:[.,]\d+)?)\s*(jt|juta|m|mio|million)\b', s)
+    if m_m:
+        num_str = m_m.group(1).replace(",", ".")
+        try:
+            return int(float(num_str) * 1000000)
+        except ValueError:
+            pass
+
+    # Standard clean up
+    s = re.sub(r'[,.]00$', '', s)
+    digits = re.sub(r'[^\d]', '', s)
+    return int(digits) if digits else 0
+
+
 def _parse_response(raw: str) -> dict:
     """Clean and parse the JSON response from the AI model."""
     raw = raw.strip()
@@ -197,10 +231,7 @@ def _parse_response(raw: str) -> dict:
     try:
         data = json.loads(raw)
         if data.get("amount") is not None:
-            try:
-                data["amount"] = int(str(data["amount"]).replace(",", "").replace(".", "").strip())
-            except (ValueError, TypeError):
-                pass
+            data["amount"] = parse_shorthand_amount(data["amount"])
         return data
     except json.JSONDecodeError as e:
         return {"error": f"Failed to parse AI response: {e}", "raw": raw}

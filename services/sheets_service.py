@@ -122,15 +122,33 @@ def append_expense(date: str, merchant: str, category: str, amount: int, notes: 
     try:
         ws = _get_worksheet(month)
 
-        # Read existing expense rows (K5:P34)
         existing = ws.get(f"K{EXPENSE_START_ROW}:P{EXPENSE_END_ROW}")
 
-        # Count used rows and find the next empty slot
         used_count = 0
         next_row = EXPENSE_START_ROW
         last_no = 0
+
+        # Optional: Deduplication check
+        clean_merchant_new = re.sub(r'[^\w]', '', merchant.lower())
+
         for i, row in enumerate(existing):
-            # Check if col K (No.) has a value — meaning it's used
+            # Check for duplicate
+            if row and any(row):
+                r_date = str(row[1]).strip() if len(row) > 1 else ""
+                r_merchant = str(row[2]).strip() if len(row) > 2 else ""
+                r_amt_str = str(row[4]).strip() if len(row) > 4 else "0"
+                r_amt = _parse_cell_number(r_amt_str)
+
+                if r_amt == amount:
+                    clean_merchant_exist = re.sub(r'[^\w]', '', r_merchant.lower())
+                    if clean_merchant_new and clean_merchant_exist and (clean_merchant_new in clean_merchant_exist or clean_merchant_exist in clean_merchant_new):
+                        if (not date) or (not r_date) or (date.strip() == r_date):
+                            return {
+                                "success": False,
+                                "duplicate": True,
+                                "error": f"⚠️ Duplikat Terdeteksi: Transaksi '{r_merchant}' sebesar Rp {amount:,} pada tanggal '{r_date}' sudah tercatat di baris {EXPENSE_START_ROW + i}."
+                            }
+
             val = row[0] if row else ""
             if str(val).strip():
                 try:
@@ -141,11 +159,9 @@ def append_expense(date: str, merchant: str, category: str, amount: int, notes: 
                 used_count += 1
                 next_row = EXPENSE_START_ROW + i + 1
             else:
-                # First empty row found
                 next_row = EXPENSE_START_ROW + i
                 break
 
-        # Check limit (maximum 30 transactions, rows 5 to 34)
         if used_count >= MAX_EXPENSE_TRANSACTIONS or next_row > EXPENSE_END_ROW:
             return {
                 "success": False,
