@@ -149,12 +149,17 @@ def append_expense(date: str, merchant: str, category: str, amount: int, notes: 
                                 "error": f"⚠️ Duplikat Terdeteksi: Transaksi '{r_merchant}' sebesar Rp {amount:,} pada tanggal '{r_date}' sudah tercatat di baris {EXPENSE_START_ROW + i}."
                             }
 
-            val = row[0] if row else ""
-            if str(val).strip():
-                try:
-                    parsed_no = int(str(val).strip())
-                    last_no = max(last_no, parsed_no)
-                except ValueError:
+            # Check if this row has any content in any column
+            row_is_used = bool(row and any(str(c).strip() for c in row))
+            if row_is_used:
+                val = row[0] if len(row) > 0 else ""
+                if str(val).strip():
+                    try:
+                        parsed_no = int(str(val).strip())
+                        last_no = max(last_no, parsed_no)
+                    except ValueError:
+                        last_no += 1
+                else:
                     last_no += 1
                 used_count += 1
                 next_row = EXPENSE_START_ROW + i + 1
