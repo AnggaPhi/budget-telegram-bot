@@ -48,16 +48,25 @@ MONTH_TABS = {
 
 # Column mapping for expense table (K=11, L=12, M=13, N=14, O=15, P=16)
 # Actual sheet columns: K=No, L=Date, M=Title, N=Description, O=Amount, P=Category
-# Range: rows 5 to 65 (maximum 60 transactions)
-EXPENSE_START_ROW = 5   # Row 5 (K5:P5)
-EXPENSE_END_ROW = 65    # Row 65 (K65:P65)
-MAX_EXPENSE_TRANSACTIONS = 60
-EXPENSE_COL_NO = 11     # K  - Row number (K5:K65)
-EXPENSE_COL_DATE = 12   # L  - Date (L5:L65)
-EXPENSE_COL_TITLE = 13  # M  - Title / Merchant (M5:M65)
-EXPENSE_COL_DESC = 14   # N  - Description / Notes (N5:N65)
-EXPENSE_COL_AMT = 15    # O  - Amount (O5:O65)
-EXPENSE_COL_CAT = 16    # P  - Category (P5:P65)
+EXPENSE_COL_NO = 11     # K  - Row number
+EXPENSE_COL_DATE = 12   # L  - Date
+EXPENSE_COL_TITLE = 13  # M  - Title / Merchant
+EXPENSE_COL_DESC = 14   # N  - Description / Notes
+EXPENSE_COL_AMT = 15    # O  - Amount
+EXPENSE_COL_CAT = 16    # P  - Category
+
+
+def get_expense_bounds(month: int = None):
+    """
+    Return (start_row, end_row, max_transactions) based on month.
+    - Q4 (October, November, December): K3:P34 (max 32 transactions)
+    - Legacy / Q1-Q3: K5:P65 (max 60 transactions)
+    """
+    if month is None:
+        month = datetime.now().month
+    if month in (10, 11, 12):
+        return 3, 34, 32
+    return 5, 65, 60
 
 
 
@@ -108,7 +117,7 @@ def _get_worksheet(month: int = None) -> gspread.Worksheet:
 
 def append_expense(date: str, merchant: str, category: str, amount: int, notes: str = "", month: int = None) -> dict:
     """
-    Append a new expense row to the transaction table (K5:P34).
+    Append a new expense row to the transaction table.
     Columns:
       K: No
       L: Date
@@ -116,19 +125,22 @@ def append_expense(date: str, merchant: str, category: str, amount: int, notes: 
       N: Description (Notes)
       O: Amount
       P: Category
-    Limit: maximum 30 transactions.
-    Returns {"success": True, "row": N, "no": N} or {"success": False, "error": "..."}
+    Q4 bounds: K3:P34 (max 32). Legacy bounds: K5:P65 (max 60).
     """
     try:
+        if month is None:
+            month = datetime.now().month
+
+        start_row, end_row, max_tx = get_expense_bounds(month)
         ws = _get_worksheet(month)
 
-        existing = ws.get(f"K{EXPENSE_START_ROW}:P{EXPENSE_END_ROW}")
+        existing = ws.get(f"K{start_row}:P{end_row}")
 
         used_count = 0
-        next_row = EXPENSE_START_ROW
+        next_row = start_row
         last_no = 0
 
-        # Optional: Deduplication check
+        # Deduplication check
         clean_merchant_new = re.sub(r'[^\w]', '', merchant.lower())
 
         for i, row in enumerate(existing):
@@ -146,7 +158,7 @@ def append_expense(date: str, merchant: str, category: str, amount: int, notes: 
                             return {
                                 "success": False,
                                 "duplicate": True,
-                                "error": f"⚠️ Duplikat Terdeteksi: Transaksi '{r_merchant}' sebesar Rp {amount:,} pada tanggal '{r_date}' sudah tercatat di baris {EXPENSE_START_ROW + i}."
+                                "error": f"⚠️ Duplikat Terdeteksi: Transaksi '{r_merchant}' sebesar Rp {amount:,} pada tanggal '{r_date}' sudah tercatat di baris {start_row + i}."
                             }
 
             # Check if this row has any content in any column
@@ -162,15 +174,15 @@ def append_expense(date: str, merchant: str, category: str, amount: int, notes: 
                 else:
                     last_no += 1
                 used_count += 1
-                next_row = EXPENSE_START_ROW + i + 1
+                next_row = start_row + i + 1
             else:
-                next_row = EXPENSE_START_ROW + i
+                next_row = start_row + i
                 break
 
-        if used_count >= MAX_EXPENSE_TRANSACTIONS or next_row > EXPENSE_END_ROW:
+        if used_count >= max_tx or next_row > end_row:
             return {
                 "success": False,
-                "error": f"⚠️ Batas maksimal {MAX_EXPENSE_TRANSACTIONS} transaksi tercapai (K{EXPENSE_START_ROW}:P{EXPENSE_END_ROW} penuh). Silakan hapus atau arsipkan transaksi lama di spreadsheet terlebih dahulu."
+                "error": f"⚠️ Batas maksimal {max_tx} transaksi tercapai (K{start_row}:P{end_row} penuh). Silakan hapus atau arsipkan transaksi lama di spreadsheet terlebih dahulu."
             }
 
         new_no = last_no + 1
@@ -329,11 +341,12 @@ def get_monthly_summary(month: int = None) -> dict:
         expenses = _parse_cell_number(expenses_raw)
         money_left = income - expenses
 
-        # Read all expense rows (K5:P34)
-        expense_rows = ws.get(f"K{EXPENSE_START_ROW}:P{EXPENSE_END_ROW}")
+        start_row, end_row, max_tx = get_expense_bounds(month)
+        # Read all expense rows
+        expense_rows = ws.get(f"K{start_row}:P{end_row}")
         transactions = []
         for row in expense_rows:
-            if row and str(row[0]).strip():
+            if row and any(str(c).strip() for c in row):
                 transactions.append({
                     "no": row[0] if len(row) > 0 else "",
                     "date": row[1] if len(row) > 1 else "",
@@ -352,7 +365,7 @@ def get_monthly_summary(month: int = None) -> dict:
             "money_left": money_left,
             "transactions": transactions,
             "count": len(transactions),
-            "max_transactions": MAX_EXPENSE_TRANSACTIONS,
+            "max_transactions": max_tx,
         }
 
     except Exception as e:
