@@ -38,7 +38,7 @@ MONTH_TABS = {
     4:  ["April", "Apr"],
     5:  ["May", "Mei"],
     6:  ["June", "Jun"],
-    7:  ["Juli", "Jul"],
+    7:  ["July", "Juli", "Jul"],
     8:  ["August", "Agt"],
     9:  ["September", "Sep"],
     10: ["October", "Okt"],
@@ -48,16 +48,16 @@ MONTH_TABS = {
 
 # Column mapping for expense table (K=11, L=12, M=13, N=14, O=15, P=16)
 # Actual sheet columns: K=No, L=Date, M=Title, N=Description, O=Amount, P=Category
-# Range: rows 5 to 34 (maximum 30 transactions)
+# Range: rows 5 to 65 (maximum 60 transactions)
 EXPENSE_START_ROW = 5   # Row 5 (K5:P5)
-EXPENSE_END_ROW = 34    # Row 34 (K34:P34)
-MAX_EXPENSE_TRANSACTIONS = 30
-EXPENSE_COL_NO = 11     # K  - Row number (K5:K34)
-EXPENSE_COL_DATE = 12   # L  - Date (L5:L34)
-EXPENSE_COL_TITLE = 13  # M  - Title / Merchant (M5:M34)
-EXPENSE_COL_DESC = 14   # N  - Description / Notes (N5:N34)
-EXPENSE_COL_AMT = 15    # O  - Amount (O5:O34)
-EXPENSE_COL_CAT = 16    # P  - Category (P5:P34)
+EXPENSE_END_ROW = 65    # Row 65 (K65:P65)
+MAX_EXPENSE_TRANSACTIONS = 60
+EXPENSE_COL_NO = 11     # K  - Row number (K5:K65)
+EXPENSE_COL_DATE = 12   # L  - Date (L5:L65)
+EXPENSE_COL_TITLE = 13  # M  - Title / Merchant (M5:M65)
+EXPENSE_COL_DESC = 14   # N  - Description / Notes (N5:N65)
+EXPENSE_COL_AMT = 15    # O  - Amount (O5:O65)
+EXPENSE_COL_CAT = 16    # P  - Category (P5:P65)
 
 
 
