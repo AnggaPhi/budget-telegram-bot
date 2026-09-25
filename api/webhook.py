@@ -244,36 +244,56 @@ def kb_type():
 async def cmd_start(update, context):
     await update.message.reply_text(
         "👋 *Selamat datang di Budget Bot!*\n\n"
-        "Kirim satu dari ini:\n"
-        "📸 *Foto struk* → Bot baca otomatis dengan AI\n"
-        "💬 *Teks bebas* → contoh: `Beli makan siang 25000`\n\n"
-        "📊 /summary — Ringkasan bulan ini\n"
-        "💰 /balance — Sisa uang (Income - Expenses)\n"
+        "Catat pengeluaran & pemasukan harianmu langsung ke Google Sheets.\n\n"
+        "📝 *Cara Pakai Cepat:*\n"
+        "📸 *Foto struk* → AI baca otomatis\n"
+        "💬 *Ketik bebas* → cth: `Makan siang 25k` atau `Bensin 50rb`\n\n"
+        "⚡ *Menu Utama:*\n"
+        "📊 /summary — Ringkasan keuangan bulan ini\n"
+        "💰 /balance — Sisa uang kas liquid\n"
         "💳 /credit — Cek tagihan hutang & cicilan\n"
-        "🔗 /link — Link langsung ke Google Spreadsheet\n"
-        "❓ /help — Bantuan lengkap",
+        "🔗 /link — Buka Google Spreadsheet\n"
+        "❓ /help — Panduan lengkap & tips format",
         parse_mode="Markdown",
     )
 
 
 async def cmd_help(update, context):
-    await update.message.reply_text(
-        "🤖 *Budget Bot — Panduan*\n\n"
-        "*📸 Foto Struk:*\nKirim foto langsung → AI baca otomatis\n\n"
-        "*💬 Contoh Teks:*\n"
-        "• `Beli bensin Shell 80000`\n"
-        "• `Bayar listrik PLN 450000`\n"
-        "• `Gaji bulan ini 8000000`\n"
-        "• `Pinjem ke Budi 150000 buat makan`\n\n"
-        "*Commands:*\n"
-        "/summary — Ringkasan transaksi & keuangan bulan ini\n"
-        "/balance — Cek sisa uang (Income I25 - Expenses I10)\n"
-        "/credit — Cek tagihan hutang & cicilan (contoh: `/credit`, `/credit oct`, `/credit depan`)\n"
-        "/link — Buka link langsung Google Spreadsheet\n"
-        "/start — Mulai ulang\n"
-        "/help — Panduan ini",
-        parse_mode="Markdown",
+    help_text = (
+        "🤖 *Budget Bot — Panduan Lengkap*\n\n"
+        "Bot asisten keuangan otomatis yang terhubung langsung dengan *Google Sheets*.\n\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "📥 *1. CARA INPUT TRANSAKSI*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "📸 *Foto Struk / Struk Belanja*\n"
+        "Kirim foto struk langsung → AI mengekstrak merchant, nominal, tanggal, dan kategori otomatis.\n\n"
+        "💬 *Input Teks Bebas*\n"
+        "Ketik pengeluaran/pemasukan santai dengan singkatan nominal:\n"
+        "• *Pengeluaran:* `Makan siang warteg 25k`, `Bensin Pertamax 50rb`\n"
+        "• *Pemasukan:* `Gaji kantor 8jt`, `Freelance web dev 1.5m`\n"
+        "• *Hutang / Tagihan:* `Pinjem Budi 150k`, `Bayar GoPayLater 120k`\n"
+        "• *Tanggal Custom:* `Kopi Tuku 18k tgl 20/09`, `Alfamart 45k kemarin`\n\n"
+        "🔢 *Shorthand Angka yang Didukung:*\n"
+        "• `k` / `rb` / `ribu` = Ribuan (cth: `25k` → `25.000`)\n"
+        "• `jt` / `juta` / `m` = Jutaan (cth: `1.5jt` → `1.500.000`)\n\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "⚡ *2. DAFTAR PERINTAH (COMMANDS)*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "📊 /summary — Ringkasan pengeluaran per kategori & total bulan ini\n"
+        "💰 /balance atau `/sisa` — Cek sisa uang kas (Income - Expenses)\n"
+        "💳 /credit atau `/debt`, `/hutang` — Cek tagihan paylater & cicilan aktif\n"
+        "    _(Bisa navigasi bulan: `/credit oct`, `/credit depan`)_\n"
+        "🔗 /link atau `/sheet` — Buka link langsung ke Google Sheets\n"
+        "🔄 /start — Menu awal\n"
+        "❓ /help — Tampilkan panduan ini\n\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "🔘 *3. INTERAKSI & KEAMANAN DATA*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "• *Konfirmasi Tombol:* Setelah AI membaca data, klik *✅ Simpan*, *✏️ Edit*, *🔄 Tipe*, atau *❌ Batal*.\n"
+        "• *Anti-Duplikasi:* Transaksi dengan tanggal, nominal, dan toko yang sama dicegah tersimpan ganda.\n"
+        "• *Edit Fleksibel:* Kamu bisa mengoreksi tanggal, merchant, nominal, atau kategori sebelum disimpan."
     )
+    await update.message.reply_text(help_text, parse_mode="Markdown")
 
 
 async def cmd_summary(update, context):
