@@ -69,14 +69,14 @@ def _call_openrouter(messages: list, is_vision: bool = False) -> str:
 
     if is_vision:
         batches = [
-            ["dots-studio/dots-3-note-preview:free", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"],
-            ["google/gemma-4-31b-it:free", "google/gemma-4-26b-a4b-it:free"],
+            ["openrouter/free", "qwen/qwen3.8-27b:free", "thinkingmachines/inkling:free"],
+            ["dots-studio/dots-3-note-preview:free", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free", "google/gemma-4-31b-it:free"],
             ["google/gemini-2.0-flash-001", "meta-llama/llama-3.2-11b-vision-instruct"],
         ]
     else:
         batches = [
-            ["inclusionai/ling-3.0-flash-fin:free", "liquid/lfm-2.5-2.6b:free", "thinkingmachines/inkling:free"],
-            ["google/gemma-4-31b-it:free", "dots-studio/dots-3-note-preview:free"],
+            ["openrouter/free", "qwen/qwen3.8-27b:free", "inclusionai/ling-3.0-flash-fin:free"],
+            ["thinkingmachines/inkling:free", "liquid/lfm-2.5-2.6b:free", "google/gemma-4-31b-it:free"],
             ["google/gemini-2.0-flash-001"],
         ]
 
@@ -147,67 +147,69 @@ def extract_from_image(image_bytes: bytes, mime_type: str = "image/jpeg") -> dic
     """Extract transaction data from a receipt image."""
     prompt = SYSTEM_PROMPT + "\n\nAnalyze this receipt image and extract the transaction details."
 
-    try:
-        raw = None
-        if os.environ.get("OPENROUTER_API_KEY"):
-            try:
-                base64_img = base64.b64encode(image_bytes).decode("utf-8")
-                data_uri = f"data:{mime_type};base64,{base64_img}"
-                messages = [
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": prompt},
-                            {
-                                "type": "image_url",
-                                "image_url": {"url": data_uri}
-                            }
-                        ]
-                    }
-                ]
-                raw = _call_openrouter(messages, is_vision=True)
-            except Exception as e:
-                # Fallback to direct Gemini API if OpenRouter hits a 429 rate limit or fails
-                if os.environ.get("GEMINI_API_KEY"):
-                    raw = _call_gemini(prompt, image_bytes=image_bytes, mime_type=mime_type)
-                else:
-                    raise e
-        else:
+    # 1. Prioritize native Gemini if GEMINI_API_KEY is available (fastest & high limits)
+    if os.environ.get("GEMINI_API_KEY"):
+        try:
             raw = _call_gemini(prompt, image_bytes=image_bytes, mime_type=mime_type)
+            return _parse_response(raw)
+        except Exception as e:
+            # If native Gemini fails, log and fallback to OpenRouter
+            pass
 
-        return _parse_response(raw)
-    except Exception as e:
-        err_str = str(e)
-        if "429" in err_str:
-            err_str = (
-                f"{err_str}\n\n"
-                "💡 *Solusi:* Model gratisan OpenRouter sedang kuota terbatas (Rate-limited upstream).\n"
-                "Silakan pasang `GEMINI_API_KEY` gratis dari https://aistudio.google.com ke Vercel Settings -> Environment Variables untuk OCR instan & stabil."
-            )
-        return {"error": err_str}
+    # 2. Fallback to OpenRouter
+    if os.environ.get("OPENROUTER_API_KEY"):
+        try:
+            base64_img = base64.b64encode(image_bytes).decode("utf-8")
+            data_uri = f"data:{mime_type};base64,{base64_img}"
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": data_uri}
+                        }
+                    ]
+                }
+            ]
+            raw = _call_openrouter(messages, is_vision=True)
+            return _parse_response(raw)
+        except Exception as e:
+            err_str = str(e)
+            if "429" in err_str:
+                err_str = (
+                    f"{err_str}\n\n"
+                    "💡 *Solusi:* Model gratisan OpenRouter sedang kuota terbatas (Rate-limited upstream).\n"
+                    "Silakan pasang `GEMINI_API_KEY` gratis dari https://aistudio.google.com ke Vercel Settings -> Environment Variables untuk OCR instan & stabil."
+                )
+            return {"error": err_str}
+
+    return {"error": "Neither GEMINI_API_KEY nor OPENROUTER_API_KEY is configured."}
 
 
 def extract_from_text(text: str) -> dict:
     """Extract transaction data from a free-text message."""
     prompt = SYSTEM_PROMPT + f'\n\nExtract transaction details from this message:\n\n"{text}"'
 
-    try:
-        raw = None
-        if os.environ.get("OPENROUTER_API_KEY"):
-            try:
-                messages = [{"role": "user", "content": prompt}]
-                raw = _call_openrouter(messages, is_vision=False)
-            except Exception as e:
-                if os.environ.get("GEMINI_API_KEY"):
-                    raw = _call_gemini(prompt)
-                else:
-                    raise e
-        else:
+    # 1. Prioritize native Gemini if GEMINI_API_KEY is available
+    if os.environ.get("GEMINI_API_KEY"):
+        try:
             raw = _call_gemini(prompt)
+            return _parse_response(raw)
+        except Exception as e:
+            pass
 
-        return _parse_response(raw)
-    except Exception as e:
-        return {"error": str(e)}
+    # 2. Fallback to OpenRouter
+    if os.environ.get("OPENROUTER_API_KEY"):
+        try:
+            messages = [{"role": "user", "content": prompt}]
+            raw = _call_openrouter(messages, is_vision=False)
+            return _parse_response(raw)
+        except Exception as e:
+            return {"error": str(e)}
+
+    return {"error": "Neither GEMINI_API_KEY nor OPENROUTER_API_KEY is configured."}
 
 
 def parse_shorthand_amount(val) -> int:
