@@ -69,13 +69,15 @@ def _call_openrouter(messages: list, is_vision: bool = False) -> str:
 
     if is_vision:
         batches = [
-            ["google/gemini-2.5-flash:free", "google/gemini-2.0-flash-lite-preview-02-05:free", "google/gemini-exp-1206:free"],
-            ["meta-llama/llama-3.2-90b-vision-instruct:free", "google/gemini-2.0-pro-exp-02-05:free"],
+            ["dots-studio/dots-3-note-preview:free", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"],
+            ["google/gemma-4-31b-it:free", "google/gemma-4-26b-a4b-it:free"],
+            ["google/gemini-2.0-flash-001", "meta-llama/llama-3.2-11b-vision-instruct"],
         ]
     else:
         batches = [
-            ["google/gemini-2.5-flash:free", "google/gemini-2.0-flash-lite-preview-02-05:free", "google/gemma-2-9b-it:free"],
-            ["meta-llama/llama-3.3-70b-instruct:free", "qwen/qwen-2.5-72b-instruct:free"],
+            ["inclusionai/ling-3.0-flash-fin:free", "liquid/lfm-2.5-2.6b:free", "thinkingmachines/inkling:free"],
+            ["google/gemma-4-31b-it:free", "dots-studio/dots-3-note-preview:free"],
+            ["google/gemini-2.0-flash-001"],
         ]
 
     custom_model = os.environ.get("OPENROUTER_MODEL")
@@ -175,7 +177,14 @@ def extract_from_image(image_bytes: bytes, mime_type: str = "image/jpeg") -> dic
 
         return _parse_response(raw)
     except Exception as e:
-        return {"error": str(e)}
+        err_str = str(e)
+        if "429" in err_str:
+            err_str = (
+                f"{err_str}\n\n"
+                "💡 *Solusi:* Model gratisan OpenRouter sedang kuota terbatas (Rate-limited upstream).\n"
+                "Silakan pasang `GEMINI_API_KEY` gratis dari https://aistudio.google.com ke Vercel Settings -> Environment Variables untuk OCR instan & stabil."
+            )
+        return {"error": err_str}
 
 
 def extract_from_text(text: str) -> dict:
