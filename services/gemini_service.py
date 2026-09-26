@@ -69,13 +69,13 @@ def _call_openrouter(messages: list, is_vision: bool = False) -> str:
 
     if is_vision:
         batches = [
-            ["google/gemma-4-31b-it:free", "inclusionai/ling-3.0-flash-vl:free", "thinkingmachines/inkling:free"],
-            ["nex-agi/nex-n2.5-mini:free", "google/gemma-4-26b-a4b-it:free"],
+            ["google/gemini-2.5-flash:free", "google/gemini-2.0-flash-lite-preview-02-05:free", "google/gemini-exp-1206:free"],
+            ["meta-llama/llama-3.2-90b-vision-instruct:free", "google/gemini-2.0-pro-exp-02-05:free"],
         ]
     else:
         batches = [
-            ["google/gemma-4-31b-it:free", "liquid/lfm-2.5-2.6b:free", "nvidia/nemotron-3.5-lightning:free"],
-            ["nex-agi/nex-n2.5-mini:free", "thinkingmachines/inkling:free", "poolside/laguna-s-2.1:free"],
+            ["google/gemini-2.5-flash:free", "google/gemini-2.0-flash-lite-preview-02-05:free", "google/gemma-2-9b-it:free"],
+            ["meta-llama/llama-3.3-70b-instruct:free", "qwen/qwen-2.5-72b-instruct:free"],
         ]
 
     custom_model = os.environ.get("OPENROUTER_MODEL")
@@ -146,22 +146,30 @@ def extract_from_image(image_bytes: bytes, mime_type: str = "image/jpeg") -> dic
     prompt = SYSTEM_PROMPT + "\n\nAnalyze this receipt image and extract the transaction details."
 
     try:
+        raw = None
         if os.environ.get("OPENROUTER_API_KEY"):
-            base64_img = base64.b64encode(image_bytes).decode("utf-8")
-            data_uri = f"data:{mime_type};base64,{base64_img}"
-            messages = [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": data_uri}
-                        }
-                    ]
-                }
-            ]
-            raw = _call_openrouter(messages, is_vision=True)
+            try:
+                base64_img = base64.b64encode(image_bytes).decode("utf-8")
+                data_uri = f"data:{mime_type};base64,{base64_img}"
+                messages = [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": data_uri}
+                            }
+                        ]
+                    }
+                ]
+                raw = _call_openrouter(messages, is_vision=True)
+            except Exception as e:
+                # Fallback to direct Gemini API if OpenRouter hits a 429 rate limit or fails
+                if os.environ.get("GEMINI_API_KEY"):
+                    raw = _call_gemini(prompt, image_bytes=image_bytes, mime_type=mime_type)
+                else:
+                    raise e
         else:
             raw = _call_gemini(prompt, image_bytes=image_bytes, mime_type=mime_type)
 
@@ -175,9 +183,16 @@ def extract_from_text(text: str) -> dict:
     prompt = SYSTEM_PROMPT + f'\n\nExtract transaction details from this message:\n\n"{text}"'
 
     try:
+        raw = None
         if os.environ.get("OPENROUTER_API_KEY"):
-            messages = [{"role": "user", "content": prompt}]
-            raw = _call_openrouter(messages, is_vision=False)
+            try:
+                messages = [{"role": "user", "content": prompt}]
+                raw = _call_openrouter(messages, is_vision=False)
+            except Exception as e:
+                if os.environ.get("GEMINI_API_KEY"):
+                    raw = _call_gemini(prompt)
+                else:
+                    raise e
         else:
             raw = _call_gemini(prompt)
 
