@@ -181,6 +181,19 @@ def format_confirmation(data):
     ]
     if data.get("category"):
         lines.append(f"🗂️ Category: `{data['category']}`")
+    
+    # Real-time money payment method
+    pm = data.get("payment_method")
+    if pm:
+        pm_labels = {
+            "cash": "💵 Cash / Tunai",
+            "bank": "🏦 Bank / Transfer",
+            "gopay": "📱 GoPay",
+            "coin": "🪙 Coin / Koin"
+        }
+        pm_display = pm_labels.get(str(pm).lower(), str(pm).capitalize())
+        lines.append(f"💳 Account: `{pm_display}`")
+
     if data.get("notes"):
         lines.append(f"📝 Notes: `{data['notes']}`")
     conf = (data.get("confidence") or "medium").lower()
@@ -206,9 +219,22 @@ def kb_edit():
          InlineKeyboardButton("🏪 Merchant", callback_data="edit_merchant")],
         [InlineKeyboardButton("💰 Amount", callback_data="edit_amount"),
          InlineKeyboardButton("🗂️ Category", callback_data="edit_category")],
-        [InlineKeyboardButton("📝 Notes", callback_data="edit_notes"),
+        [InlineKeyboardButton("💳 Account", callback_data="edit_payment"),
          InlineKeyboardButton("🔄 Type", callback_data="edit_type")],
-        [InlineKeyboardButton("« Back", callback_data="edit_back")],
+        [InlineKeyboardButton("📝 Notes", callback_data="edit_notes"),
+         InlineKeyboardButton("« Back", callback_data="edit_back")],
+    ])
+
+
+def kb_payment():
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("💵 Tunai (Cash)", callback_data="pay_cash"),
+         InlineKeyboardButton("🏦 Transfer (Bank)", callback_data="pay_bank")],
+        [InlineKeyboardButton("📱 GoPay", callback_data="pay_gopay"),
+         InlineKeyboardButton("🪙 Koin (Coin)", callback_data="pay_coin")],
+        [InlineKeyboardButton("🚫 Tanpa Akun (Skip)", callback_data="pay_none")],
+        [InlineKeyboardButton("« Back", callback_data="confirm_edit")],
     ])
 
 
@@ -268,11 +294,12 @@ async def cmd_help(update, context):
         "📸 *Foto Struk / Struk Belanja*\n"
         "Kirim foto struk langsung → AI mengekstrak merchant, nominal, tanggal, dan kategori otomatis.\n\n"
         "💬 *Input Teks Bebas*\n"
-        "Ketik pengeluaran/pemasukan santai dengan singkatan nominal:\n"
-        "• *Pengeluaran:* `Makan siang warteg 25k`, `Bensin Pertamax 50rb`\n"
-        "• *Pemasukan:* `Gaji kantor 8jt`, `Freelance web dev 1.5m`\n"
+        "Ketik pengeluaran/pemasukan santai dengan singkatan nominal & metode pembayaran:\n"
+        "• *Pengeluaran:* `Makan siang warteg 25k tunai`, `Bensin Shell 50rb transfer`\n"
+        "• *Pemasukan:* `Gaji kantor 8jt transfer`, `Dapat cash 500k`\n"
+        "• *Auto Real-Time Money:* Tambahkan kata `tunai`/`cash` atau `transfer`/`bank`/`gopay` agar saldo Real-Time Money di sheet langsung terpotong otomatis!\n"
         "• *Hutang / Tagihan:* `Pinjem Budi 150k`, `Bayar GoPayLater 120k`\n"
-        "• *Tanggal Custom:* `Kopi Tuku 18k tgl 20/09`, `Alfamart 45k kemarin`\n\n"
+        "• *Tanggal Custom:* `Kopi Tuku 18k tgl 20/09 tunai`, `Alfamart 45k transfer kemarin`\n\n"
         "🔢 *Shorthand Angka yang Didukung:*\n"
         "• `k` / `rb` / `ribu` = Ribuan (cth: `25k` → `25.000`)\n"
         "• `jt` / `juta` / `m` = Jutaan (cth: `1.5jt` → `1.500.000`)\n\n"
@@ -523,7 +550,7 @@ async def _apply_edit_input(update, session, text):
     if field == "amount":
         clean = "".join(c for c in text if c.isdigit())
         data["amount"] = int(clean) if clean else data["amount"]
-    elif field in ("date", "merchant", "notes", "category"):
+    elif field in ("date", "merchant", "notes", "category", "payment_method"):
         data[field] = text
     session["editing_field"] = None
     await update.message.reply_text(
@@ -536,7 +563,7 @@ async def _apply_edit_input(update, session, text):
 # ── Callback Query Handler ────────────────────────────────────────────────────
 
 async def handle_callback(update, context):
-    from services.sheets_service import append_expense, append_income, append_asset
+    from services.sheets_service import append_expense, append_income, append_asset, update_realtime_money
     query = update.callback_query
     await query.answer()
     user_id = update.effective_user.id
@@ -553,6 +580,7 @@ async def handle_callback(update, context):
         merchant = data.get("merchant") or "Unknown"
         amount = int(data.get("amount") or 0)
         category = data.get("category") or "Others"
+        payment_method = data.get("payment_method")
         notes = data.get("notes") or ""
         await query.edit_message_text("💾 Menyimpan ke Google Sheets... ⏳")
         if tx_type == "income":
@@ -563,10 +591,20 @@ async def handle_callback(update, context):
             cat = category if tx_type == "expense" else f"{category} ({tx_type.capitalize()})"
             result = append_expense(date, merchant, cat, amount, notes)
         if result.get("success"):
+            rt_msg = ""
+            if payment_method:
+                is_exp = (tx_type != "income")
+                rt_res = update_realtime_money(payment_method, amount, is_expense=is_exp)
+                if rt_res.get("success"):
+                    acc = rt_res["account"]
+                    old_v = format_amount(rt_res["old_value"])
+                    new_v = format_amount(rt_res["new_value"])
+                    rt_msg = f"\n💳 *Real-Time Money ({acc}):* `{old_v}` ➔ `{new_v}`"
+
             sessions.pop(user_id, None)
             await query.edit_message_text(
                 f"🎉 *Tersimpan!*\n\n✅ Transaksi #{result.get('no','?')} berhasil dicatat.\n"
-                f"💰 {format_amount(amount)} → sheet bulan ini\n\nKirim foto atau teks berikutnya 📲",
+                f"💰 {format_amount(amount)} → sheet bulan ini{rt_msg}\n\nKirim foto atau teks berikutnya 📲",
                 parse_mode="Markdown",
             )
         else:
@@ -593,6 +631,16 @@ async def handle_callback(update, context):
     elif cb.startswith("cat_"):
         if session:
             session["data"]["category"] = cb[4:]
+            session["editing_field"] = None
+            await query.edit_message_text(format_confirmation(session["data"]), parse_mode="Markdown", reply_markup=kb_confirm())
+
+    elif cb == "edit_payment":
+        await query.edit_message_text("💳 Pilih Akun Real-Time Money:", reply_markup=kb_payment())
+
+    elif cb.startswith("pay_"):
+        if session:
+            selected_pay = cb[4:]
+            session["data"]["payment_method"] = None if selected_pay == "none" else selected_pay
             session["editing_field"] = None
             await query.edit_message_text(format_confirmation(session["data"]), parse_mode="Markdown", reply_markup=kb_confirm())
 

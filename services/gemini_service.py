@@ -42,6 +42,7 @@ Extract the transaction details and return ONLY a valid JSON object with these f
   "merchant": "store or person name",
   "amount": 12345 (raw integer only, no currency symbol, no dots/commas),
   "category": "one of the categories above (for expense only)",
+  "payment_method": "cash" | "bank" | "gopay" | "coin" | null,
   "notes": "brief description",
   "confidence": "high" | "medium" | "low"
 }}
@@ -52,6 +53,12 @@ Rules:
   * "k", "rb", "ribu" = thousand (e.g. "12k" -> 12000, "12.5k" -> 12500, "25rb" -> 25000, "500k" -> 500000)
   * "jt", "juta", "m" = million (e.g. "1.5jt" -> 1500000, "2jt" -> 2000000)
 - Always convert amount to a clean integer (e.g. 12k must become 12000, not 12)
+- Payment Method detection:
+  * "tunai", "cash", "uang fisik", "pecahan" -> "cash"
+  * "transfer", "bank", "bca", "jago", "rekening", "debit", "qris" -> "bank"
+  * "gopay", "gopaylater" -> "gopay"
+  * "coin", "koin" -> "coin"
+  * If no payment method is mentioned, set null.
 - For income: merchant = source of income (e.g. "Salary", "Freelance")
 - For debt: merchant = person I borrowed from, notes = what for
 - For credit: merchant = person who owes me, notes = what for  
@@ -188,6 +195,22 @@ def extract_from_image(image_bytes: bytes, mime_type: str = "image/jpeg") -> dic
     return {"error": "Neither GEMINI_API_KEY nor OPENROUTER_API_KEY is configured."}
 
 
+def detect_payment_method(text: str):
+    """Fallback regex detection for Indonesian payment methods."""
+    if not text:
+        return None
+    t = text.lower()
+    if re.search(r'\b(tunai|cash|uang fisik|pecahan)\b', t):
+        return "cash"
+    if re.search(r'\b(transfer|tf|bank|bca|jago|mandiri|bri|bni|debit|qris|rekening)\b', t):
+        return "bank"
+    if re.search(r'\b(gopay|gopaylater)\b', t):
+        return "gopay"
+    if re.search(r'\b(coin|koin)\b', t):
+        return "coin"
+    return None
+
+
 def extract_from_text(text: str) -> dict:
     """Extract transaction data from a free-text message."""
     prompt = SYSTEM_PROMPT + f'\n\nExtract transaction details from this message:\n\n"{text}"'
@@ -196,7 +219,10 @@ def extract_from_text(text: str) -> dict:
     if os.environ.get("GEMINI_API_KEY"):
         try:
             raw = _call_gemini(prompt)
-            return _parse_response(raw)
+            res = _parse_response(raw)
+            if isinstance(res, dict) and not res.get("payment_method"):
+                res["payment_method"] = detect_payment_method(text)
+            return res
         except Exception as e:
             pass
 
@@ -205,7 +231,10 @@ def extract_from_text(text: str) -> dict:
         try:
             messages = [{"role": "user", "content": prompt}]
             raw = _call_openrouter(messages, is_vision=False)
-            return _parse_response(raw)
+            res = _parse_response(raw)
+            if isinstance(res, dict) and not res.get("payment_method"):
+                res["payment_method"] = detect_payment_method(text)
+            return res
         except Exception as e:
             return {"error": str(e)}
 

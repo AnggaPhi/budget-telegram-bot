@@ -285,6 +285,57 @@ def update_debt_credit(row: int, label: str, amount: int, month: int = None) -> 
         return {"success": False, "error": str(e)}
 
 
+def update_realtime_money(payment_method: str, amount: int, is_expense: bool = True, month: int = None) -> dict:
+    """
+    Update Real-Time Money section (G3:I6) based on payment_method:
+      - 'cash' / 'tunai': matches label containing 'Cash' or 'Tunai'
+      - 'bank' / 'transfer': matches label containing 'Bank', 'Backup', or 'Rekening'
+      - 'gopay': matches label containing 'GoPay'
+      - 'coin': matches label containing 'Coin' or 'Koin'
+    """
+    if not payment_method or not amount:
+        return {"success": False, "error": "No payment method or amount specified."}
+
+    pm = str(payment_method).lower().strip()
+    try:
+        ws = _get_worksheet(month)
+        rows = ws.get("G3:I6")
+
+        target_row_idx = None
+        account_name = None
+        old_value = 0
+
+        for i, row in enumerate(rows):
+            label = str(row[0]).lower().strip() if len(row) > 0 else ""
+            if (pm in ("cash", "tunai") and ("cash" in label or "tunai" in label)) or \
+               (pm in ("bank", "transfer", "debit", "qris", "rekening", "jago", "bca") and ("bank" in label or "backup" in label or "rekening" in label)) or \
+               (pm in ("gopay", "gopaylater") and "gopay" in label) or \
+               (pm in ("coin", "koin") and ("coin" in label or "koin" in label)):
+                target_row_idx = 3 + i
+                account_name = str(row[0]).strip() if len(row) > 0 else pm.capitalize()
+                raw_val = row[2] if len(row) > 2 else "0"
+                old_value = _parse_cell_number(raw_val)
+                break
+
+        if not target_row_idx:
+            return {"success": False, "error": f"Metode bayar '{payment_method}' tidak ditemukan di tabel Real-Time Money (G3:G6)."}
+
+        change = -amount if is_expense else amount
+        new_value = old_value + change
+
+        ws.update(f"I{target_row_idx}", [[new_value]])
+
+        return {
+            "success": True,
+            "account": account_name,
+            "old_value": old_value,
+            "new_value": new_value,
+            "change": change,
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 def _parse_cell_number(val) -> int:
     """Parse integer number from a sheet cell (handles 'Rp', commas, periods, spaces, negatives)."""
     if val is None:
