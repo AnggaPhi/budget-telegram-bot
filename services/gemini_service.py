@@ -119,7 +119,12 @@ def _call_openrouter(messages: list, is_vision: bool = False) -> str:
                 res_data = json.loads(resp.read().decode("utf-8"))
                 choices = res_data.get("choices", [])
                 if choices:
-                    return choices[0]["message"]["content"]
+                    content = choices[0]["message"]["content"]
+                    if content and content.strip():
+                        return content
+                    # Empty content — treat as failure, try next batch
+                    last_error = "Model returned empty response"
+                    continue
         except urllib.error.HTTPError as e:
             err_msg = e.read().decode("utf-8", errors="ignore")
             last_error = f"OpenRouter error {e.code}: {err_msg}"
@@ -273,6 +278,9 @@ def parse_shorthand_amount(val) -> int:
 
 def _parse_response(raw: str) -> dict:
     """Clean and parse the JSON response from the AI model."""
+    if not raw or not raw.strip():
+        return {"error": "AI model returned an empty response. Please try again."}
+
     raw = raw.strip()
     raw = re.sub(r"^```json\s*", "", raw, flags=re.IGNORECASE)
     raw = re.sub(r"^```\s*", "", raw)
@@ -290,6 +298,6 @@ def _parse_response(raw: str) -> dict:
             data["amount"] = parse_shorthand_amount(data["amount"])
         return data
     except json.JSONDecodeError as e:
-        return {"error": f"Failed to parse AI response: {e}", "raw": raw}
+        return {"error": f"Failed to parse AI response: {e}", "raw": raw[:500]}
 
 
