@@ -35,16 +35,24 @@ Currency: Indonesian Rupiah (IDR/Rp)
 Available expense categories: {", ".join(CATEGORIES)}
 Transaction types: expense, income, debt (money I owe someone), credit (money someone owes me), asset (stock/gold/crypto update)
 
-Extract the transaction details and return ONLY a valid JSON object with these fields:
+Analyze the message or receipt/screenshot and extract ALL transactions.
+- If there is 1 transaction (or a single store receipt with an overall grand total), extract that 1 transaction.
+- If there are multiple transactions (e.g. multiple distinct purchases mentioned in text, a bank mutation statement, e-wallet transaction history, or multiple slips), extract EACH transaction separately.
+
+Return ONLY a valid JSON object with a "transactions" list containing the transaction objects:
 {{
-  "type": "expense" | "income" | "debt" | "credit" | "asset",
-  "date": "M/D/YYYY",
-  "merchant": "store or person name",
-  "amount": 12345 (raw integer only, no currency symbol, no dots/commas),
-  "category": "one of the categories above (for expense only)",
-  "payment_method": "cash" | "bank" | "gopay" | "coin" | null,
-  "notes": "brief description",
-  "confidence": "high" | "medium" | "low"
+  "transactions": [
+    {{
+      "type": "expense" | "income" | "debt" | "credit" | "asset",
+      "date": "M/D/YYYY",
+      "merchant": "store, item or person name",
+      "amount": 12345 (raw integer only, no currency symbol, no dots/commas),
+      "category": "one of the categories above (for expense only)",
+      "payment_method": "cash" | "bank" | "gopay" | "coin" | null,
+      "notes": "brief description",
+      "confidence": "high" | "medium" | "low"
+    }}
+  ]
 }}
 
 Rules:
@@ -53,12 +61,14 @@ Rules:
   * "k", "rb", "ribu" = thousand (e.g. "12k" -> 12000, "12.5k" -> 12500, "25rb" -> 25000, "500k" -> 500000)
   * "jt", "juta", "m" = million (e.g. "1.5jt" -> 1500000, "2jt" -> 2000000)
 - Always convert amount to a clean integer (e.g. 12k must become 12000, not 12)
-- Payment Method detection:
+- Payment Method detection per transaction:
   * "tunai", "cash", "uang fisik", "pecahan" -> "cash"
   * "transfer", "bank", "bca", "jago", "rekening", "debit", "qris" -> "bank"
   * "gopay", "gopaylater" -> "gopay"
   * "coin", "koin" -> "coin"
   * If no payment method is mentioned, set null.
+- Single store receipt handling: If an image is a single supermarket/store receipt (e.g. Indomaret, Alfamart) or restaurant bill with itemized line items and a grand total at the bottom, treat it as ONE transaction with the store name as merchant and the grand total as amount.
+- Transaction history / mutation handling: If an image or text contains multiple distinct transactions (e.g. m-banking mutasi, GoPay/Shopee transaction list, or text listing multiple separate expenses), extract EACH as a separate item in "transactions".
 - For income: merchant = source of income (e.g. "Salary", "Freelance")
 - For debt: merchant = person I borrowed from, notes = what for
 - For credit: merchant = person who owes me, notes = what for  
@@ -156,48 +166,63 @@ def _call_gemini(prompt: str, image_bytes: bytes = None, mime_type: str = "image
 
 
 def extract_from_image(image_bytes: bytes, mime_type: str = "image/jpeg") -> dict:
-    """Extract transaction data from a receipt image."""
-    prompt = SYSTEM_PROMPT + "\n\nAnalyze this receipt image and extract the transaction details."
+    """Extract transaction data from a receipt image or transaction history screenshot."""
+    prompt = SYSTEM_PROMPT + "\n\nAnalyze this receipt image or transaction history screenshot and extract all transaction details."
 
+    res = None
     # 1. Prioritize native Gemini if GEMINI_API_KEY is available (fastest & high limits)
     if os.environ.get("GEMINI_API_KEY"):
         try:
             raw = _call_gemini(prompt, image_bytes=image_bytes, mime_type=mime_type)
-            return _parse_response(raw)
+            res = _parse_response(raw)
         except Exception as e:
             # If native Gemini fails, log and fallback to OpenRouter
             pass
 
     # 2. Fallback to OpenRouter
-    if os.environ.get("OPENROUTER_API_KEY"):
-        try:
-            base64_img = base64.b64encode(image_bytes).decode("utf-8")
-            data_uri = f"data:{mime_type};base64,{base64_img}"
-            messages = [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": data_uri}
-                        }
-                    ]
-                }
-            ]
-            raw = _call_openrouter(messages, is_vision=True)
-            return _parse_response(raw)
-        except Exception as e:
-            err_str = str(e)
-            if "429" in err_str:
-                err_str = (
-                    f"{err_str}\n\n"
-                    "💡 *Solusi:* Model gratisan OpenRouter sedang kuota terbatas (Rate-limited upstream).\n"
-                    "Silakan pasang `GEMINI_API_KEY` gratis dari https://aistudio.google.com ke Vercel Settings -> Environment Variables untuk OCR instan & stabil."
-                )
-            return {"error": err_str}
+    if not res or "error" in res:
+        if os.environ.get("OPENROUTER_API_KEY"):
+            try:
+                base64_img = base64.b64encode(image_bytes).decode("utf-8")
+                data_uri = f"data:{mime_type};base64,{base64_img}"
+                messages = [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": data_uri}
+                            }
+                        ]
+                    }
+                ]
+                raw = _call_openrouter(messages, is_vision=True)
+                res = _parse_response(raw)
+            except Exception as e:
+                err_str = str(e)
+                if "429" in err_str:
+                    err_str = (
+                        f"{err_str}\n\n"
+                        "💡 *Solusi:* Model gratisan OpenRouter sedang kuota terbatas (Rate-limited upstream).\n"
+                        "Silakan pasang `GEMINI_API_KEY` gratis dari https://aistudio.google.com ke Vercel Settings -> Environment Variables untuk OCR instan & stabil."
+                    )
+                if not res:
+                    return {"error": err_str}
 
-    return {"error": "Neither GEMINI_API_KEY nor OPENROUTER_API_KEY is configured."}
+    if not res:
+        return {"error": "Neither GEMINI_API_KEY nor OPENROUTER_API_KEY is configured."}
+
+    if isinstance(res, dict) and "transactions" in res:
+        for tx in res["transactions"]:
+            if not tx.get("payment_method"):
+                item_pm = detect_payment_method(f"{tx.get('merchant', '')} {tx.get('notes', '')}")
+                if item_pm:
+                    tx["payment_method"] = item_pm
+        if len(res["transactions"]) == 1:
+            res["payment_method"] = res["transactions"][0].get("payment_method")
+
+    return res
 
 
 def detect_payment_method(text: str):
@@ -217,33 +242,44 @@ def detect_payment_method(text: str):
 
 
 def extract_from_text(text: str) -> dict:
-    """Extract transaction data from a free-text message."""
+    """Extract transaction data from a free-text message (single or multiple)."""
     prompt = SYSTEM_PROMPT + f'\n\nExtract transaction details from this message:\n\n"{text}"'
 
+    res = None
     # 1. Prioritize native Gemini if GEMINI_API_KEY is available
     if os.environ.get("GEMINI_API_KEY"):
         try:
             raw = _call_gemini(prompt)
             res = _parse_response(raw)
-            if isinstance(res, dict) and not res.get("payment_method"):
-                res["payment_method"] = detect_payment_method(text)
-            return res
         except Exception as e:
             pass
 
     # 2. Fallback to OpenRouter
-    if os.environ.get("OPENROUTER_API_KEY"):
-        try:
-            messages = [{"role": "user", "content": prompt}]
-            raw = _call_openrouter(messages, is_vision=False)
-            res = _parse_response(raw)
-            if isinstance(res, dict) and not res.get("payment_method"):
-                res["payment_method"] = detect_payment_method(text)
-            return res
-        except Exception as e:
-            return {"error": str(e)}
+    if not res or "error" in res:
+        if os.environ.get("OPENROUTER_API_KEY"):
+            try:
+                messages = [{"role": "user", "content": prompt}]
+                raw = _call_openrouter(messages, is_vision=False)
+                res = _parse_response(raw)
+            except Exception as e:
+                if not res:
+                    return {"error": str(e)}
 
-    return {"error": "Neither GEMINI_API_KEY nor OPENROUTER_API_KEY is configured."}
+    if not res:
+        return {"error": "Neither GEMINI_API_KEY nor OPENROUTER_API_KEY is configured."}
+
+    if isinstance(res, dict) and "transactions" in res:
+        for tx in res["transactions"]:
+            if not tx.get("payment_method"):
+                item_pm = detect_payment_method(f"{tx.get('merchant', '')} {tx.get('notes', '')}")
+                if not item_pm and len(res["transactions"]) == 1:
+                    item_pm = detect_payment_method(text)
+                if item_pm:
+                    tx["payment_method"] = item_pm
+        if len(res["transactions"]) == 1:
+            res["payment_method"] = res["transactions"][0].get("payment_method")
+
+    return res
 
 
 def parse_shorthand_amount(val) -> int:
@@ -277,7 +313,7 @@ def parse_shorthand_amount(val) -> int:
 
 
 def _parse_response(raw: str) -> dict:
-    """Clean and parse the JSON response from the AI model."""
+    """Clean and parse the JSON response from the AI model (handles single or multiple transactions)."""
     if not raw or not raw.strip():
         return {"error": "AI model returned an empty response. Please try again."}
 
@@ -288,16 +324,41 @@ def _parse_response(raw: str) -> dict:
     raw = raw.strip()
 
     # Find JSON substring if model included extra commentary
-    json_match = re.search(r"(\{.*\})", raw, flags=re.DOTALL)
+    json_match = re.search(r"(\{.*\}|\[.*\])", raw, flags=re.DOTALL)
     if json_match:
         raw = json_match.group(1)
 
     try:
         data = json.loads(raw)
-        if data.get("amount") is not None:
-            data["amount"] = parse_shorthand_amount(data["amount"])
-        return data
     except json.JSONDecodeError as e:
         return {"error": f"Failed to parse AI response: {e}", "raw": raw[:500]}
+
+    # Normalize into list of transactions
+    transactions = []
+    if isinstance(data, list):
+        transactions = data
+    elif isinstance(data, dict):
+        if "transactions" in data and isinstance(data["transactions"], list):
+            transactions = data["transactions"]
+        else:
+            transactions = [data]
+
+    cleaned_txs = []
+    for tx in transactions:
+        if not isinstance(tx, dict):
+            continue
+        if tx.get("amount") is not None:
+            tx["amount"] = parse_shorthand_amount(tx["amount"])
+        else:
+            tx["amount"] = 0
+        cleaned_txs.append(tx)
+
+    if not cleaned_txs:
+        return {"error": "No valid transaction details found in AI response."}
+
+    # Backward-compatible root keys
+    result = dict(cleaned_txs[0])
+    result["transactions"] = cleaned_txs
+    return result
 
 

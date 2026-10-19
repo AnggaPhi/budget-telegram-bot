@@ -201,6 +201,108 @@ def append_expense(date: str, merchant: str, category: str, amount: int, notes: 
         return {"success": False, "error": str(e)}
 
 
+def append_expenses_batch(items: list, month=None) -> dict:
+    """
+    Append multiple expense rows in a single batch operation.
+    Each item in items is a dict with: date, merchant, category, amount, notes.
+    """
+    if not items:
+        return {"success": False, "error": "No items to append."}
+
+    try:
+        target_month = int(month) if month else datetime.now().month
+
+        start_row, end_row, max_tx = get_expense_bounds(target_month)
+        ws = _get_worksheet(target_month)
+
+        existing = ws.get(f"K{start_row}:P{end_row}")
+
+        used_count = 0
+        next_row = start_row
+        last_no = 0
+
+        # Build list of existing transactions for duplicate detection
+        existing_records = []
+        for i, row in enumerate(existing):
+            if row and any(str(c).strip() for c in row):
+                r_date = str(row[1]).strip() if len(row) > 1 else ""
+                r_merchant = str(row[2]).strip() if len(row) > 2 else ""
+                r_amt_str = str(row[4]).strip() if len(row) > 4 else "0"
+                r_amt = _parse_cell_number(r_amt_str)
+                existing_records.append((r_date, re.sub(r'[^\w]', '', r_merchant.lower()), r_amt))
+
+                val = row[0] if len(row) > 0 else ""
+                if str(val).strip():
+                    try:
+                        parsed_no = int(str(val).strip())
+                        last_no = max(last_no, parsed_no)
+                    except ValueError:
+                        last_no += 1
+                else:
+                    last_no += 1
+                used_count += 1
+                next_row = start_row + i + 1
+            else:
+                next_row = start_row + i
+                break
+
+        if used_count + len(items) > max_tx or (next_row + len(items) - 1) > end_row:
+            return {
+                "success": False,
+                "error": f"⚠️ Tidak cukup ruang untuk {len(items)} transaksi (sisa slot: {max_tx - used_count})."
+            }
+
+        rows_to_write = []
+        saved_items = []
+        skipped_duplicates = []
+
+        for item in items:
+            date = str(item.get("date") or "")
+            merchant = str(item.get("merchant") or "Unknown")
+            category = str(item.get("category") or "Others")
+            amount = int(item.get("amount") or 0)
+            notes = str(item.get("notes") or "")
+
+            # Duplicate check
+            clean_merch = re.sub(r'[^\w]', '', merchant.lower())
+            is_dup = False
+            for (e_date, e_merch, e_amt) in existing_records:
+                if e_amt == amount and clean_merch and e_merch and (clean_merch in e_merch or e_merch in clean_merch):
+                    if (not date) or (not e_date) or (date.strip() == e_date):
+                        is_dup = True
+                        break
+
+            if is_dup:
+                skipped_duplicates.append(f"{merchant} (Rp {amount:,})")
+                continue
+
+            last_no += 1
+            rows_to_write.append([last_no, date, merchant, notes, amount, category])
+            saved_items.append(item)
+            existing_records.append((date, clean_merch, amount))
+
+        if not rows_to_write:
+            return {
+                "success": False,
+                "error": f"Semua transaksi ({len(skipped_duplicates)}) terdeteksi duplikat dan dilewati."
+            }
+
+        end_write_row = next_row + len(rows_to_write) - 1
+        ws.update(f"K{next_row}:P{end_write_row}", rows_to_write)
+
+        return {
+            "success": True,
+            "count": len(rows_to_write),
+            "start_row": next_row,
+            "end_row": end_write_row,
+            "items": saved_items,
+            "skipped_duplicates": skipped_duplicates
+        }
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 def append_income(date: str, source: str, amount: int, notes: str = "", month: int = None) -> dict:
     """
     Append a new income entry to the income tracker (G14:I24).
@@ -332,6 +434,67 @@ def update_realtime_money(payment_method: str, amount: int, is_expense: bool = T
             "new_value": new_value,
             "change": change,
         }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def update_realtime_money_batch(payments: list, month=None) -> dict:
+    """
+    Update Real-Time Money section (G3:I6) for multiple payment methods in one read-write pass.
+    payments is a list of dicts: [{"payment_method": ..., "amount": ..., "is_expense": True/False}, ...]
+    """
+    if not payments:
+        return {"success": False, "error": "No payments specified."}
+
+    try:
+        target_month = int(month) if month else datetime.now().month
+        ws = _get_worksheet(target_month)
+        rows = ws.get("G3:I6")
+        if not rows:
+            return {"success": False, "error": "Tabel Real-Time Money kosong."}
+
+        # Calculate net change per row index (0..3 -> G3..G6)
+        changes = {0: 0, 1: 0, 2: 0, 3: 0}
+        account_names = {}
+        old_values = {}
+
+        for i, row in enumerate(rows):
+            account_names[i] = str(row[0]).strip() if len(row) > 0 else f"Account {i+1}"
+            raw_val = row[2] if len(row) > 2 else "0"
+            old_values[i] = _parse_cell_number(raw_val)
+
+        for p in payments:
+            pm = str(p.get("payment_method") or "").lower().strip()
+            amt = int(p.get("amount") or 0)
+            is_exp = p.get("is_expense", True)
+            if not pm or not amt:
+                continue
+
+            delta = -amt if is_exp else amt
+            for i, row in enumerate(rows):
+                label = str(row[0]).lower().strip() if len(row) > 0 else ""
+                if (pm in ("cash", "tunai") and ("cash" in label or "tunai" in label)) or \
+                   (pm in ("bank", "transfer", "debit", "qris", "rekening", "jago", "bca") and ("bank" in label or "backup" in label or "rekening" in label)) or \
+                   (pm in ("gopay", "gopaylater") and "gopay" in label) or \
+                   (pm in ("coin", "koin") and ("coin" in label or "koin" in label)):
+                    changes[i] += delta
+                    break
+
+        updates_summary = []
+        for i in range(len(rows)):
+            if changes[i] != 0:
+                row_idx = 3 + i
+                new_val = old_values[i] + changes[i]
+                ws.update(f"I{row_idx}", [[new_val]])
+                updates_summary.append({
+                    "account": account_names[i],
+                    "old_value": old_values[i],
+                    "new_value": new_val,
+                    "change": changes[i]
+                })
+
+        return {"success": True, "updates": updates_summary}
+
     except Exception as e:
         return {"success": False, "error": str(e)}
 

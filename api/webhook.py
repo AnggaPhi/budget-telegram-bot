@@ -170,6 +170,39 @@ def parse_amount(val) -> int:
 
 
 def format_confirmation(data):
+    transactions = data.get("transactions") if isinstance(data, dict) else None
+    if transactions and len(transactions) > 1:
+        lines = [f"🧾 *Ditemukan {len(transactions)} Transaksi:*\n"]
+        total_amount = 0
+        emoji_map = {"expense": "💸", "income": "💰", "debt": "🔴", "credit": "🟢", "asset": "📈"}
+        pm_labels = {
+            "cash": "💵 Cash",
+            "bank": "🏦 Bank",
+            "gopay": "📱 GoPay",
+            "coin": "🪙 Coin"
+        }
+        for idx, tx in enumerate(transactions, 1):
+            tx_type = (tx.get("type") or "expense").lower()
+            emoji = emoji_map.get(tx_type, "💸")
+            amt = int(tx.get("amount") or 0)
+            total_amount += amt
+            merch = tx.get("merchant") or "Unknown"
+            cat = tx.get("category") or "Others"
+            date = tx.get("date") or "Unknown"
+            pm = tx.get("payment_method")
+            pm_str = f" | {pm_labels.get(str(pm).lower(), str(pm).capitalize())}" if pm else ""
+            notes = f"   📝 _{tx.get('notes')}_" if tx.get("notes") else ""
+
+            lines.append(f"{idx}. {emoji} *{merch}* — `{format_amount(amt)}`")
+            lines.append(f"   📅 `{date}` | 🗂️ {cat}{pm_str}")
+            if notes:
+                lines.append(notes)
+            lines.append("")
+
+        lines.append(f"📊 *Total:* `{format_amount(total_amount)}`")
+        lines.append("\nApakah semua transaksi di atas ingin disimpan?")
+        return "\n".join(lines).strip()
+
     tx_type = (data.get("type") or "expense").lower()
     emoji_map = {"expense": "💸", "income": "💰", "debt": "🔴", "credit": "🟢", "asset": "📈"}
     emoji = emoji_map.get(tx_type, "💸")
@@ -203,8 +236,14 @@ def format_confirmation(data):
     return "\n".join(lines)
 
 
-def kb_confirm():
+def kb_confirm(data=None):
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    txs = data.get("transactions") if isinstance(data, dict) else None
+    if txs and len(txs) > 1:
+        return InlineKeyboardMarkup([[
+            InlineKeyboardButton(f"✅ Simpan Semua ({len(txs)})", callback_data="confirm_save"),
+            InlineKeyboardButton("❌ Batalkan", callback_data="confirm_cancel"),
+        ]])
     return InlineKeyboardMarkup([[
         InlineKeyboardButton("✅ Save", callback_data="confirm_save"),
         InlineKeyboardButton("✏️ Edit", callback_data="confirm_edit"),
@@ -521,7 +560,7 @@ async def handle_photo(update, context):
         )
         return
     sessions[user_id] = {"data": data, "editing_field": None}
-    await msg.edit_text(format_confirmation(data), parse_mode="Markdown", reply_markup=kb_confirm())
+    await msg.edit_text(format_confirmation(data), parse_mode="Markdown", reply_markup=kb_confirm(data))
 
 
 async def handle_text(update, context):
@@ -541,7 +580,7 @@ async def handle_text(update, context):
         )
         return
     sessions[user_id] = {"data": data, "editing_field": None}
-    await msg.edit_text(format_confirmation(data), parse_mode="Markdown", reply_markup=kb_confirm())
+    await msg.edit_text(format_confirmation(data), parse_mode="Markdown", reply_markup=kb_confirm(data))
 
 
 async def _apply_edit_input(update, session, text):
@@ -552,18 +591,25 @@ async def _apply_edit_input(update, session, text):
         data["amount"] = int(clean) if clean else data["amount"]
     elif field in ("date", "merchant", "notes", "category", "payment_method"):
         data[field] = text
+
+    if "transactions" in data and len(data["transactions"]) == 1:
+        data["transactions"][0][field] = data[field]
+
     session["editing_field"] = None
     await update.message.reply_text(
         "✅ Diupdate!\n\n" + format_confirmation(data),
         parse_mode="Markdown",
-        reply_markup=kb_confirm(),
+        reply_markup=kb_confirm(data),
     )
 
 
 # ── Callback Query Handler ────────────────────────────────────────────────────
 
 async def handle_callback(update, context):
-    from services.sheets_service import append_expense, append_income, append_asset, update_realtime_money
+    from services.sheets_service import (
+        append_expense, append_income, append_asset, update_realtime_money,
+        append_expenses_batch, update_realtime_money_batch
+    )
     query = update.callback_query
     await query.answer()
     user_id = update.effective_user.id
@@ -575,6 +621,116 @@ async def handle_callback(update, context):
             await query.edit_message_text("⚠️ Session habis. Kirim ulang transaksi.")
             return
         data = session["data"]
+        transactions = data.get("transactions") or [data]
+
+        # ── MULTI-TRANSACTION BATCH SAVE ──
+        if len(transactions) > 1:
+            await query.edit_message_text(f"💾 Menyimpan {len(transactions)} transaksi ke Google Sheets... ⏳")
+
+            expense_items = []
+            non_expense_items = []
+            payments = []
+
+            for tx in transactions:
+                tx_type = (tx.get("type") or "expense").lower()
+                date = normalize_date(tx.get("date"))
+                merchant = tx.get("merchant") or "Unknown"
+                amount = int(tx.get("amount") or 0)
+                category = tx.get("category") or "Others"
+                payment_method = tx.get("payment_method")
+                notes = tx.get("notes") or ""
+
+                item_dict = {
+                    "type": tx_type,
+                    "date": date,
+                    "merchant": merchant,
+                    "amount": amount,
+                    "category": category,
+                    "payment_method": payment_method,
+                    "notes": notes,
+                }
+
+                if tx_type == "expense":
+                    expense_items.append(item_dict)
+                else:
+                    non_expense_items.append(item_dict)
+
+                if payment_method:
+                    payments.append({
+                        "payment_method": payment_method,
+                        "amount": amount,
+                        "is_expense": (tx_type != "income")
+                    })
+
+            saved_details = []
+            total_saved_amount = 0
+            errors = []
+
+            # 1. Batch append expenses
+            if expense_items:
+                batch_res = append_expenses_batch(expense_items)
+                if batch_res.get("success"):
+                    for item in batch_res.get("items", []):
+                        amt = item["amount"]
+                        total_saved_amount += amt
+                        pm_str = f" ({item['payment_method']})" if item.get("payment_method") else ""
+                        saved_details.append(f"• {item['merchant']}: {format_amount(amt)}{pm_str}")
+                    if batch_res.get("skipped_duplicates"):
+                        for dup in batch_res["skipped_duplicates"]:
+                            errors.append(f"• [Duplikat] {dup}")
+                else:
+                    errors.append(f"Gagal batch expense: {batch_res.get('error')}")
+
+            # 2. Append non-expense items (income, asset, etc.)
+            for item in non_expense_items:
+                tx_type = item["type"]
+                amt = item["amount"]
+                if tx_type == "income":
+                    res = append_income(item["date"], item["merchant"], amt, item["notes"])
+                elif tx_type == "asset":
+                    res = append_asset(item["merchant"], item["notes"], amt)
+                else:
+                    cat = f"{item['category']} ({tx_type.capitalize()})"
+                    res = append_expense(item["date"], item["merchant"], cat, amt, item["notes"])
+
+                if res.get("success"):
+                    total_saved_amount += amt
+                    pm_str = f" ({item['payment_method']})" if item.get("payment_method") else ""
+                    saved_details.append(f"• {item['merchant']}: {format_amount(amt)}{pm_str}")
+                else:
+                    errors.append(f"• {item['merchant']}: {res.get('error')}")
+
+            # 3. Batch update Real-Time Money
+            rt_msg = ""
+            if payments and saved_details:
+                try:
+                    rt_res = update_realtime_money_batch(payments)
+                    if rt_res.get("success") and rt_res.get("updates"):
+                        rt_lines = [f"{u['account']}: {format_amount(u['old_value'])} ➔ {format_amount(u['new_value'])}" for u in rt_res["updates"]]
+                        rt_msg = "\n💳 *Real-Time Money:*\n" + "\n".join(f"  • {l}" for l in rt_lines)
+                except Exception as e:
+                    logger.error(f"Batch Real-Time Money update failed: {e}")
+
+            sessions.pop(user_id, None)
+
+            if saved_details:
+                summary_text = (
+                    f"🎉 *{len(saved_details)} Transaksi Tersimpan!*\n\n"
+                    f"✅ Berhasil dicatat ke sheet bulan ini:\n"
+                    + "\n".join(saved_details) + "\n\n"
+                    f"💰 *Total:* `{format_amount(total_saved_amount)}`"
+                    f"{rt_msg}"
+                )
+                if errors:
+                    summary_text += f"\n\n⚠️ Catatan:\n" + "\n".join(errors)
+                summary_text += "\n\nKirim foto atau teks berikutnya 📲"
+                await query.edit_message_text(summary_text, parse_mode="Markdown")
+            else:
+                err_msg = "\n".join(errors) if errors else "Terjadi kesalahan."
+                await query.edit_message_text(f"❌ Gagal menyimpan transaksi:\n\n{err_msg}")
+            return
+
+        # ── SINGLE TRANSACTION SAVE ──
         tx_type = (data.get("type") or "expense").lower()
         date = normalize_date(data.get("date"))
         merchant = data.get("merchant") or "Unknown"
@@ -623,16 +779,19 @@ async def handle_callback(update, context):
             await query.edit_message_text("⚠️ Session habis.")
             return
         session["editing_field"] = None
-        await query.edit_message_text(format_confirmation(session["data"]), parse_mode="Markdown", reply_markup=kb_confirm())
+        await query.edit_message_text(format_confirmation(session["data"]), parse_mode="Markdown", reply_markup=kb_confirm(session["data"]))
 
     elif cb == "edit_category":
         await query.edit_message_text("🗂️ Pilih kategori:", reply_markup=kb_category())
 
     elif cb.startswith("cat_"):
         if session:
-            session["data"]["category"] = cb[4:]
+            cat_val = cb[4:]
+            session["data"]["category"] = cat_val
+            if "transactions" in session["data"] and len(session["data"]["transactions"]) == 1:
+                session["data"]["transactions"][0]["category"] = cat_val
             session["editing_field"] = None
-            await query.edit_message_text(format_confirmation(session["data"]), parse_mode="Markdown", reply_markup=kb_confirm())
+            await query.edit_message_text(format_confirmation(session["data"]), parse_mode="Markdown", reply_markup=kb_confirm(session["data"]))
 
     elif cb == "edit_payment":
         await query.edit_message_text("💳 Pilih Akun Real-Time Money:", reply_markup=kb_payment())
@@ -640,18 +799,24 @@ async def handle_callback(update, context):
     elif cb.startswith("pay_"):
         if session:
             selected_pay = cb[4:]
-            session["data"]["payment_method"] = None if selected_pay == "none" else selected_pay
+            pay_val = None if selected_pay == "none" else selected_pay
+            session["data"]["payment_method"] = pay_val
+            if "transactions" in session["data"] and len(session["data"]["transactions"]) == 1:
+                session["data"]["transactions"][0]["payment_method"] = pay_val
             session["editing_field"] = None
-            await query.edit_message_text(format_confirmation(session["data"]), parse_mode="Markdown", reply_markup=kb_confirm())
+            await query.edit_message_text(format_confirmation(session["data"]), parse_mode="Markdown", reply_markup=kb_confirm(session["data"]))
 
     elif cb == "edit_type":
         await query.edit_message_text("🔄 Pilih tipe transaksi:", reply_markup=kb_type())
 
     elif cb.startswith("type_"):
         if session:
-            session["data"]["type"] = cb[5:]
+            type_val = cb[5:]
+            session["data"]["type"] = type_val
+            if "transactions" in session["data"] and len(session["data"]["transactions"]) == 1:
+                session["data"]["transactions"][0]["type"] = type_val
             session["editing_field"] = None
-            await query.edit_message_text(format_confirmation(session["data"]), parse_mode="Markdown", reply_markup=kb_confirm())
+            await query.edit_message_text(format_confirmation(session["data"]), parse_mode="Markdown", reply_markup=kb_confirm(session["data"]))
 
     elif cb in ("edit_date", "edit_merchant", "edit_amount", "edit_notes"):
         if not session:
