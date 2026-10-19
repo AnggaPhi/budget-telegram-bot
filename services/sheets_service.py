@@ -59,13 +59,13 @@ EXPENSE_COL_CAT = 16    # P  - Category
 def get_expense_bounds(month: int = None):
     """
     Return (start_row, end_row, max_transactions) based on month.
-    - Q4 (October, November, December): K3:P34 (max 32 transactions)
+    - Q4 (October, November, December): K3:P66 (max 64 transactions)
     - Legacy / Q1-Q3: K5:P65 (max 60 transactions)
     """
     if month is None:
         month = datetime.now().month
     if month in (10, 11, 12):
-        return 3, 34, 32
+        return 3, 66, 64
     return 5, 65, 60
 
 
@@ -125,7 +125,7 @@ def append_expense(date: str, merchant: str, category: str, amount: int, notes: 
       N: Description (Notes)
       O: Amount
       P: Category
-    Q4 bounds: K3:P34 (max 32). Legacy bounds: K5:P65 (max 60).
+    Q4 bounds: K3:P66 (max 64). Legacy bounds: K5:P65 (max 60).
     """
     try:
         if month is None:
